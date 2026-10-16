@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-agent-files:
+    name: No tracked agent files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if agent or learnings paths are tracked
+        run: |
+          bad=$(git ls-files | grep -E '^(\.agents?/|\.gemini/|\.ai/|\.cursor/|\.claude/|docs/learnings/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)' || true)
+          if [ -n "$bad" ]; then
+            echo "Agent or learnings files must not be tracked:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: no agent or learnings files are tracked."
+
+  # The "regenerate and diff" drift check is added together with the first
+  # generator (see the schema and data tickets).
+
+  notify:
+    name: Notify
+    if: always()
+    needs: [no-agent-files]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post consolidated status to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "No webhook configured; skipping."; exit 0; fi
+          case "$RESULTS" in
+            *failure*) title="CI failed"; color=15088454 ;;
+            *cancelled*) title="CI cancelled"; color=15088454 ;;
+            *) title="CI passed"; color=4388484 ;;
+          esac
+          curl -sS -H "Content-Type: application/json" -d "{\"embeds\":[{\"title\":\"$title\",\"description\":\"$REPO ($REF)\\n[View run]($RUN_URL)\",\"color\":$color}]}" "$WEBHOOK"
