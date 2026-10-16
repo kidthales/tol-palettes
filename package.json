@@ -1,0 +1,18 @@
+{
+  "name": "tol-palettes",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Paul Tol colour scheme data (values only, with attribution) and generators.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "validate": "node tools/validate.mjs",
+    "extract": "node tools/extract.mjs"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}
