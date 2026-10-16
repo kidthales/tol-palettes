@@ -1,0 +1,43 @@
+{
+  "id": "ylorbr",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#FFFFE5"
+    },
+    {
+      "hex": "#FFF7BC"
+    },
+    {
+      "hex": "#FEE391"
+    },
+    {
+      "hex": "#FEC44F"
+    },
+    {
+      "hex": "#FB9A29"
+    },
+    {
+      "hex": "#EC7014"
+    },
+    {
+      "hex": "#CC4C02"
+    },
+    {
+      "hex": "#993404"
+    },
+    {
+      "hex": "#662506"
+    }
+  ],
+  "bad": "#888888",
+  "interpolation": "either",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_ylorbr",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_ylorbr",
+    "module": "tol_cmap('YlOrBr')",
+    "moduleName": "YlOrBr",
+    "moduleVersion": "2022.10"
+  }
+}

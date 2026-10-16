@@ -1,0 +1,73 @@
+{
+  "id": "banded-20",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#D2D1E2"
+    },
+    {
+      "hex": "#C8B9D1"
+    },
+    {
+      "hex": "#BEA0BF"
+    },
+    {
+      "hex": "#B287AD"
+    },
+    {
+      "hex": "#A56B99"
+    },
+    {
+      "hex": "#9ACFF1"
+    },
+    {
+      "hex": "#85BAE4"
+    },
+    {
+      "hex": "#6FA3D7"
+    },
+    {
+      "hex": "#578DC9"
+    },
+    {
+      "hex": "#3774BA"
+    },
+    {
+      "hex": "#BFD6A1"
+    },
+    {
+      "hex": "#9CC48E"
+    },
+    {
+      "hex": "#78B27B"
+    },
+    {
+      "hex": "#4F9F68"
+    },
+    {
+      "hex": "#058A53"
+    },
+    {
+      "hex": "#F6B93D"
+    },
+    {
+      "hex": "#F29B31"
+    },
+    {
+      "hex": "#ED7A24"
+    },
+    {
+      "hex": "#E65318"
+    },
+    {
+      "hex": "#D9070D"
+    }
+  ],
+  "bad": "#FFFFFF",
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_banded",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_banded"
+  }
+}

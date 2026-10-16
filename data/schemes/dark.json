@@ -1,0 +1,45 @@
+{
+  "id": "dark",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#4477BB"
+    },
+    {
+      "hex": "#CC4466"
+    },
+    {
+      "hex": "#228833"
+    },
+    {
+      "hex": "#2255AA"
+    },
+    {
+      "hex": "#993366"
+    },
+    {
+      "hex": "#006644"
+    },
+    {
+      "hex": "#117788"
+    },
+    {
+      "hex": "#882288"
+    },
+    {
+      "hex": "#BB4488"
+    },
+    {
+      "hex": "#775500"
+    },
+    {
+      "hex": "#444444"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_dark",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_dark"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "id": "whorbr",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#FFFFFF"
+    },
+    {
+      "hex": "#FFF7BC"
+    },
+    {
+      "hex": "#FEE391"
+    },
+    {
+      "hex": "#FEC44F"
+    },
+    {
+      "hex": "#FB9A29"
+    },
+    {
+      "hex": "#EC7014"
+    },
+    {
+      "hex": "#CC4C02"
+    },
+    {
+      "hex": "#993404"
+    },
+    {
+      "hex": "#662506"
+    }
+  ],
+  "bad": "#888888",
+  "interpolation": "linear",
+  "source": {
+    "retrieved": "2026-10-16",
+    "module": "tol_cmap('WhOrBr')",
+    "moduleName": "WhOrBr",
+    "moduleVersion": "2022.10",
+    "notes": [
+      "Equals ylorbr with a white first colour."
+    ]
+  }
+}

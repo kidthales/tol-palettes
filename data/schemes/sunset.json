@@ -1,0 +1,49 @@
+{
+  "id": "sunset",
+  "kind": "diverging",
+  "colors": [
+    {
+      "hex": "#364B9A"
+    },
+    {
+      "hex": "#4A7BB7"
+    },
+    {
+      "hex": "#6EA6CD"
+    },
+    {
+      "hex": "#98CAE1"
+    },
+    {
+      "hex": "#C2E4EF"
+    },
+    {
+      "hex": "#EAECCC"
+    },
+    {
+      "hex": "#FEDA8B"
+    },
+    {
+      "hex": "#FDB366"
+    },
+    {
+      "hex": "#F67E4B"
+    },
+    {
+      "hex": "#DD3D2D"
+    },
+    {
+      "hex": "#A50026"
+    }
+  ],
+  "bad": "#FFFFFF",
+  "interpolation": "either",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_sunset",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_sunset",
+    "module": "tol_cmap('sunset')",
+    "moduleName": "sunset",
+    "moduleVersion": "2022.10"
+  }
+}

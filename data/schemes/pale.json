@@ -1,0 +1,33 @@
+{
+  "id": "pale",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#AACCEE"
+    },
+    {
+      "hex": "#CCEEFF"
+    },
+    {
+      "hex": "#BBDDBB"
+    },
+    {
+      "hex": "#EEEEBB"
+    },
+    {
+      "hex": "#FFBBCC"
+    },
+    {
+      "hex": "#EEBBDD"
+    },
+    {
+      "hex": "#DDDDDD"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_marking",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_marking"
+  }
+}

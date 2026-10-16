@@ -1,0 +1,32 @@
+{
+  "id": "high-contrast",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#004488",
+      "name": "blue"
+    },
+    {
+      "hex": "#DDAA33",
+      "name": "yellow"
+    },
+    {
+      "hex": "#BB5566",
+      "name": "red"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_highcontrast",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_highcontrast",
+    "module": "tol_cset('high-contrast')",
+    "moduleVersion": "2022.10"
+  }
+}
