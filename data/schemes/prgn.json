@@ -1,0 +1,43 @@
+{
+  "id": "prgn",
+  "kind": "diverging",
+  "colors": [
+    {
+      "hex": "#762A83"
+    },
+    {
+      "hex": "#9970AB"
+    },
+    {
+      "hex": "#C2A5CF"
+    },
+    {
+      "hex": "#E7D4E8"
+    },
+    {
+      "hex": "#F7F7F7"
+    },
+    {
+      "hex": "#D9F0D3"
+    },
+    {
+      "hex": "#ACD39E"
+    },
+    {
+      "hex": "#5AAE61"
+    },
+    {
+      "hex": "#1B7837"
+    }
+  ],
+  "bad": "#FFEE99",
+  "interpolation": "either",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_prgn",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_prgn",
+    "module": "tol_cmap('PRGn')",
+    "moduleName": "PRGn",
+    "moduleVersion": "2022.10"
+  }
+}

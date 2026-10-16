@@ -1,0 +1,54 @@
+{
+  "id": "groundcover",
+  "kind": "special",
+  "colors": [
+    {
+      "hex": "#5566AA"
+    },
+    {
+      "hex": "#117733"
+    },
+    {
+      "hex": "#44AA66"
+    },
+    {
+      "hex": "#55AA22"
+    },
+    {
+      "hex": "#668822"
+    },
+    {
+      "hex": "#99BB55"
+    },
+    {
+      "hex": "#558877"
+    },
+    {
+      "hex": "#88BBAA"
+    },
+    {
+      "hex": "#AADDCC"
+    },
+    {
+      "hex": "#44AA88"
+    },
+    {
+      "hex": "#DDCC66"
+    },
+    {
+      "hex": "#FFDD44"
+    },
+    {
+      "hex": "#FFEE88"
+    },
+    {
+      "hex": "#BB0011"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_groundcover",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_groundcover"
+  }
+}

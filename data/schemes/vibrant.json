@@ -1,0 +1,48 @@
+{
+  "id": "vibrant",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#EE7733",
+      "name": "orange"
+    },
+    {
+      "hex": "#0077BB",
+      "name": "blue"
+    },
+    {
+      "hex": "#33BBEE",
+      "name": "cyan"
+    },
+    {
+      "hex": "#EE3377",
+      "name": "magenta"
+    },
+    {
+      "hex": "#CC3311",
+      "name": "red"
+    },
+    {
+      "hex": "#009988",
+      "name": "teal"
+    },
+    {
+      "hex": "#BBBBBB",
+      "name": "grey"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_vibrant",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_vibrant",
+    "module": "tol_cset('vibrant')",
+    "moduleVersion": "2022.10"
+  }
+}

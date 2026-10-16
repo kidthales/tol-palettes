@@ -1,0 +1,48 @@
+{
+  "id": "bright",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#4477AA",
+      "name": "blue"
+    },
+    {
+      "hex": "#EE6677",
+      "name": "red"
+    },
+    {
+      "hex": "#228833",
+      "name": "green"
+    },
+    {
+      "hex": "#CCBB44",
+      "name": "yellow"
+    },
+    {
+      "hex": "#66CCEE",
+      "name": "cyan"
+    },
+    {
+      "hex": "#AA3377",
+      "name": "purple"
+    },
+    {
+      "hex": "#BBBBBB",
+      "name": "grey"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_bright",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_bright",
+    "module": "tol_cset('bright')",
+    "moduleVersion": "2022.10"
+  }
+}

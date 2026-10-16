@@ -1,0 +1,85 @@
+{
+  "id": "iridescent",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#FEFBE9"
+    },
+    {
+      "hex": "#FCF7D5"
+    },
+    {
+      "hex": "#F5F3C1"
+    },
+    {
+      "hex": "#EAF0B5"
+    },
+    {
+      "hex": "#DDECBF"
+    },
+    {
+      "hex": "#D0E7CA"
+    },
+    {
+      "hex": "#C2E3D2"
+    },
+    {
+      "hex": "#B5DDD8"
+    },
+    {
+      "hex": "#A8D8DC"
+    },
+    {
+      "hex": "#9BD2E1"
+    },
+    {
+      "hex": "#8DCBE4"
+    },
+    {
+      "hex": "#81C4E7"
+    },
+    {
+      "hex": "#7BBCE7"
+    },
+    {
+      "hex": "#7EB2E4"
+    },
+    {
+      "hex": "#88A5DD"
+    },
+    {
+      "hex": "#9398D2"
+    },
+    {
+      "hex": "#9B8AC4"
+    },
+    {
+      "hex": "#9D7DB2"
+    },
+    {
+      "hex": "#9A709E"
+    },
+    {
+      "hex": "#906388"
+    },
+    {
+      "hex": "#805770"
+    },
+    {
+      "hex": "#684957"
+    },
+    {
+      "hex": "#46353A"
+    }
+  ],
+  "bad": "#999999",
+  "interpolation": "linear",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_iridescent",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_iridescent",
+    "module": "tol_cmap('iridescent')",
+    "moduleName": "iridescent",
+    "moduleVersion": "2022.10"
+  }
+}

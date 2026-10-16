@@ -24,13 +24,27 @@ jobs:
           fi
           echo "OK: no agent or learnings files are tracked."
 
-  # The "regenerate and diff" drift check is added together with the first
-  # generator (see the schema and data tickets).
+  test:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run validate
+      - run: npm test
+
+  # The "regenerate and diff" check for generated outputs is added together with
+  # the first generator. `npm run extract -- --check` compares the data with
+  # upstream and is meant for scheduled or manual runs, not pull requests.
 
   notify:
     name: Notify
     if: always()
-    needs: [no-agent-files]
+    needs: [no-agent-files, test]
     runs-on: ubuntu-latest
     steps:
       - name: Post consolidated status to Discord

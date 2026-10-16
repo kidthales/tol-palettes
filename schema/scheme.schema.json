@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kidthales/tol-palettes/schema/scheme.schema.json",
+  "title": "tol-palettes scheme",
+  "description": "One colour scheme. Colour values only; a colour 'name' is present only when the official source (tol_colors.py) provides one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "colors", "interpolation", "source"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "kind": { "enum": ["qualitative", "diverging", "sequential", "special"] },
+    "colors": {
+      "description": "Colours in the source's default order.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/color" }
+    },
+    "extras": {
+      "description": "Additional colours that exist only in tol_colors.py (for example black), kept apart from the notes page's list.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/color" }
+    },
+    "bad": { "$ref": "#/$defs/hex", "description": "Colour intended for missing/bad data, as given by the source." },
+    "interpolation": {
+      "description": "How the source says the colours may be used: none (discrete only), linear (intended to be interpolated) or either.",
+      "enum": ["none", "linear", "either"]
+    },
+    "discreteIndexes": {
+      "description": "Indexes into colors that form the discrete variant when it differs from using every colour.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "lut": {
+      "description": "Discrete rainbow only: lut[n-1] lists the indexes into colors used when n colours are requested.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "array", "minItems": 1, "items": { "type": "integer", "minimum": 0 } }
+    },
+    "lutBad": {
+      "description": "Discrete rainbow only: bad-data colour overrides keyed by requested length.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/hex" }
+    },
+    "subranges": {
+      "description": "Named sub-ranges of colors (inclusive indexes), with the bad-data colour that goes with each.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "from", "to"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "from": { "type": "integer", "minimum": 0 },
+          "to": { "type": "integer", "minimum": 0 },
+          "bad": { "$ref": "#/$defs/hex" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retrieved"],
+      "anyOf": [{ "required": ["siteFigure"] }, { "required": ["module"] }],
+      "properties": {
+        "siteFigure": { "type": "string", "pattern": "^fig:" },
+        "siteUrl": { "type": "string", "format": "uri" },
+        "module": { "type": "string", "minLength": 1 },
+        "moduleName": { "type": "string", "minLength": 1 },
+        "moduleVersion": { "type": "string", "minLength": 1 },
+        "retrieved": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "notes": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  },
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^#[0-9A-F]{6}$" },
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hex"],
+      "properties": {
+        "hex": { "$ref": "#/$defs/hex" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
