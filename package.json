@@ -10,7 +10,9 @@
   "scripts": {
     "test": "node --test",
     "validate": "node tools/validate.mjs",
-    "extract": "node tools/extract.mjs"
+    "extract": "node tools/extract.mjs",
+    "generate:css": "node tools/generate-css.mjs",
+    "generate": "npm run generate:css"
   },
   "devDependencies": {
     "ajv": "^8.17.1"
