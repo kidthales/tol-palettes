@@ -1,0 +1,25 @@
+# Agent configuration and learnings: never tracked
+.agents/
+.agent/
+.gemini/
+.ai/
+.cursor/
+.claude/
+AGENTS.md
+GEMINI.md
+CLAUDE.md
+docs/learnings/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
