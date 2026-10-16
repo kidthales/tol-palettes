@@ -1,0 +1,58 @@
+tol-palettes: third-party notices
+================================
+
+This project is independent. It is not affiliated with or endorsed by Paul Tol.
+The name "Paul Tol" is used only to describe the source of the colour values.
+
+Policy: this project stores colour VALUES only, with attribution. It does not
+copy the notes' prose, figures, the PDF or the LaTeX template.
+
+Sources
+-------
+1. Paul Tol's notes, "Colour schemes and templates"
+   https://sronpersonalpages.nl/~pault/
+2. tol_colors.py (version 2022.10)
+   https://sronpersonalpages.nl/~pault/data/tol_colors.py
+   Its header reads: "Copyright (c) 2022, Paul Tol. All rights reserved.
+   License: Standard 3-clause BSD". The header names the licence but does not
+   reproduce its text, so the standard 3-clause BSD text is reproduced below.
+3. Colour schemes and templates (PDF)
+   https://sronpersonalpages.nl/~pault/data/colourschemes.pdf
+
+Which values come from where is recorded per scheme in data/schemes/*.json
+(the "source" field). Values that also appear in tol_colors.py are covered by
+the notice below. Values that appear only on the notes page (for example dark,
+pale, incandescent, banded and groundcover) are published as plain colour
+values with attribution to the notes page; their terms have not been
+confirmed with the author.
+
+BSD 3-Clause License (applies to values derived from tol_colors.py)
+-------------------------------------------------------------------
+
+Copyright (c) 2022, Paul Tol
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
