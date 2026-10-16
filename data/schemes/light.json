@@ -1,0 +1,56 @@
+{
+  "id": "light",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#77AADD",
+      "name": "light_blue"
+    },
+    {
+      "hex": "#EE8866",
+      "name": "orange"
+    },
+    {
+      "hex": "#EEDD88",
+      "name": "light_yellow"
+    },
+    {
+      "hex": "#FFAABB",
+      "name": "pink"
+    },
+    {
+      "hex": "#99DDFF",
+      "name": "light_cyan"
+    },
+    {
+      "hex": "#44BB99",
+      "name": "mint"
+    },
+    {
+      "hex": "#BBCC33",
+      "name": "pear"
+    },
+    {
+      "hex": "#AAAA00",
+      "name": "olive"
+    },
+    {
+      "hex": "#DDDDDD",
+      "name": "pale_grey"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_light",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_light",
+    "module": "tol_cset('light')",
+    "moduleVersion": "2022.10"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "id": "nightfall",
+  "kind": "diverging",
+  "colors": [
+    {
+      "hex": "#125A56"
+    },
+    {
+      "hex": "#00767B"
+    },
+    {
+      "hex": "#238F9D"
+    },
+    {
+      "hex": "#42A7C6"
+    },
+    {
+      "hex": "#60BCE9"
+    },
+    {
+      "hex": "#9DCCEF"
+    },
+    {
+      "hex": "#C6DBED"
+    },
+    {
+      "hex": "#DEE6E7"
+    },
+    {
+      "hex": "#ECEADA"
+    },
+    {
+      "hex": "#F0E6B2"
+    },
+    {
+      "hex": "#F9D576"
+    },
+    {
+      "hex": "#FFB954"
+    },
+    {
+      "hex": "#FD9A44"
+    },
+    {
+      "hex": "#F57634"
+    },
+    {
+      "hex": "#E94C1F"
+    },
+    {
+      "hex": "#D11807"
+    },
+    {
+      "hex": "#A01813"
+    }
+  ],
+  "bad": "#FFFFFF",
+  "interpolation": "either",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_nightfall",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_nightfall",
+    "module": "tol_cmap('nightfall')",
+    "moduleName": "nightfall",
+    "moduleVersion": "2022.10"
+  },
+  "discreteIndexes": [
+    0,
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16
+  ]
+}

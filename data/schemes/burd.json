@@ -1,0 +1,43 @@
+{
+  "id": "burd",
+  "kind": "diverging",
+  "colors": [
+    {
+      "hex": "#2166AC"
+    },
+    {
+      "hex": "#4393C3"
+    },
+    {
+      "hex": "#92C5DE"
+    },
+    {
+      "hex": "#D1E5F0"
+    },
+    {
+      "hex": "#F7F7F7"
+    },
+    {
+      "hex": "#FDDBC7"
+    },
+    {
+      "hex": "#F4A582"
+    },
+    {
+      "hex": "#D6604D"
+    },
+    {
+      "hex": "#B2182B"
+    }
+  ],
+  "bad": "#FFEE99",
+  "interpolation": "either",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_burd",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_burd",
+    "module": "tol_cmap('BuRd')",
+    "moduleName": "BuRd",
+    "moduleVersion": "2022.10"
+  }
+}

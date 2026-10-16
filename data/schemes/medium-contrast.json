@@ -1,0 +1,44 @@
+{
+  "id": "medium-contrast",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#6699CC",
+      "name": "light_blue"
+    },
+    {
+      "hex": "#004488",
+      "name": "dark_blue"
+    },
+    {
+      "hex": "#EECC66",
+      "name": "light_yellow"
+    },
+    {
+      "hex": "#994455",
+      "name": "dark_red"
+    },
+    {
+      "hex": "#997700",
+      "name": "dark_yellow"
+    },
+    {
+      "hex": "#EE99AA",
+      "name": "light_red"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_mediumcontrast",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_mediumcontrast",
+    "module": "tol_cset('medium-contrast')",
+    "moduleVersion": "2022.10"
+  }
+}

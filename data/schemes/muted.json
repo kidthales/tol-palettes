@@ -1,0 +1,61 @@
+{
+  "id": "muted",
+  "kind": "qualitative",
+  "colors": [
+    {
+      "hex": "#CC6677",
+      "name": "rose"
+    },
+    {
+      "hex": "#332288",
+      "name": "indigo"
+    },
+    {
+      "hex": "#DDCC77",
+      "name": "sand"
+    },
+    {
+      "hex": "#117733",
+      "name": "green"
+    },
+    {
+      "hex": "#88CCEE",
+      "name": "cyan"
+    },
+    {
+      "hex": "#882255",
+      "name": "wine"
+    },
+    {
+      "hex": "#44AA99",
+      "name": "teal"
+    },
+    {
+      "hex": "#999933",
+      "name": "olive"
+    },
+    {
+      "hex": "#AA4499",
+      "name": "purple"
+    }
+  ],
+  "extras": [
+    {
+      "hex": "#DDDDDD",
+      "name": "pale_grey"
+    },
+    {
+      "hex": "#000000",
+      "name": "black"
+    }
+  ],
+  "bad": "#DDDDDD",
+  "interpolation": "none",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_muted",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_muted",
+    "module": "tol_cset('muted')",
+    "moduleVersion": "2022.10"
+  }
+}

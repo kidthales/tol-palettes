@@ -1,0 +1,143 @@
+{
+  "id": "rainbow-smooth",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#E8ECFB"
+    },
+    {
+      "hex": "#DDD8EF"
+    },
+    {
+      "hex": "#D1C1E1"
+    },
+    {
+      "hex": "#C3A8D1"
+    },
+    {
+      "hex": "#B58FC2"
+    },
+    {
+      "hex": "#A778B4"
+    },
+    {
+      "hex": "#9B62A7"
+    },
+    {
+      "hex": "#8C4E99"
+    },
+    {
+      "hex": "#6F4C9B"
+    },
+    {
+      "hex": "#6059A9"
+    },
+    {
+      "hex": "#5568B8"
+    },
+    {
+      "hex": "#4E79C5"
+    },
+    {
+      "hex": "#4D8AC6"
+    },
+    {
+      "hex": "#4E96BC"
+    },
+    {
+      "hex": "#549EB3"
+    },
+    {
+      "hex": "#59A5A9"
+    },
+    {
+      "hex": "#60AB9E"
+    },
+    {
+      "hex": "#69B190"
+    },
+    {
+      "hex": "#77B77D"
+    },
+    {
+      "hex": "#8CBC68"
+    },
+    {
+      "hex": "#A6BE54"
+    },
+    {
+      "hex": "#BEBC48"
+    },
+    {
+      "hex": "#D1B541"
+    },
+    {
+      "hex": "#DDAA3C"
+    },
+    {
+      "hex": "#E49C39"
+    },
+    {
+      "hex": "#E78C35"
+    },
+    {
+      "hex": "#E67932"
+    },
+    {
+      "hex": "#E4632D"
+    },
+    {
+      "hex": "#DF4828"
+    },
+    {
+      "hex": "#DA2222"
+    },
+    {
+      "hex": "#B8221E"
+    },
+    {
+      "hex": "#95211B"
+    },
+    {
+      "hex": "#721E17"
+    },
+    {
+      "hex": "#521A13"
+    }
+  ],
+  "bad": "#666666",
+  "interpolation": "linear",
+  "subranges": [
+    {
+      "id": "rainbow_WhRd",
+      "from": 0,
+      "to": 29,
+      "bad": "#666666"
+    },
+    {
+      "id": "rainbow_WhBr",
+      "from": 0,
+      "to": 33,
+      "bad": "#666666"
+    },
+    {
+      "id": "rainbow_PuRd",
+      "from": 8,
+      "to": 29,
+      "bad": "#FFFFFF"
+    },
+    {
+      "id": "rainbow_PuBr",
+      "from": 8,
+      "to": 33,
+      "bad": "#FFFFFF"
+    }
+  ],
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_rainbow_smooth",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_rainbow_smooth",
+    "module": "tol_cmap('rainbow_*')",
+    "moduleVersion": "2022.10"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "incandescent",
+  "kind": "sequential",
+  "colors": [
+    {
+      "hex": "#CEFFFF"
+    },
+    {
+      "hex": "#C6F7D6"
+    },
+    {
+      "hex": "#A2F49B"
+    },
+    {
+      "hex": "#BBE453"
+    },
+    {
+      "hex": "#D5CE04"
+    },
+    {
+      "hex": "#E7B503"
+    },
+    {
+      "hex": "#F19903"
+    },
+    {
+      "hex": "#F6790B"
+    },
+    {
+      "hex": "#F94902"
+    },
+    {
+      "hex": "#E40515"
+    },
+    {
+      "hex": "#A80003"
+    }
+  ],
+  "bad": "#888888",
+  "interpolation": "linear",
+  "source": {
+    "retrieved": "2026-10-16",
+    "siteFigure": "fig:scheme_incandescent",
+    "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_incandescent"
+  }
+}
