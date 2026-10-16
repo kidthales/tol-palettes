@@ -37,14 +37,34 @@ jobs:
       - run: npm run validate
       - run: npm test
 
-  # The "regenerate and diff" check for generated outputs is added together with
-  # the first generator. `npm run extract -- --check` compares the data with
-  # upstream and is meant for scheduled or manual runs, not pull requests.
+  generated:
+    name: Generated outputs are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run generate
+      - name: Fail on drift
+        run: |
+          if [ -n "$(git status --porcelain dist)" ]; then
+            echo "dist/ differs from a fresh generation. Run 'npm run generate' and commit the result."
+            git status --porcelain dist
+            git diff --stat dist
+            exit 1
+          fi
+          echo "OK: dist/ is up to date."
+
+  # `npm run extract -- --check` compares the data with upstream and is meant for
+  # scheduled or manual runs, not pull requests.
 
   notify:
     name: Notify
     if: always()
-    needs: [no-agent-files, test]
+    needs: [no-agent-files, test, generated]
     runs-on: ubuntu-latest
     steps:
       - name: Post consolidated status to Discord
