@@ -10,8 +10,10 @@ GEMINI.md
 CLAUDE.md
 docs/learnings/
 
-# Dependencies
+# Dependencies and bytecode
 node_modules/
+__pycache__/
+*.py[cod]
 
 # Environment
 .env
