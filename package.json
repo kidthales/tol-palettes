@@ -1,9 +1,20 @@
 {
   "name": "tol-palettes",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Paul Tol colour scheme data (values only, with attribution) and generators.",
   "type": "module",
+  "main": "./dist/js/index.js",
+  "types": "./dist/js/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/js/index.d.ts",
+      "default": "./dist/js/index.js"
+    },
+    "./schemes.json": "./dist/json/schemes.json",
+    "./css/*": "./dist/css/*"
+  },
+  "sideEffects": false,
   "engines": {
     "node": ">=22"
   },
@@ -12,7 +23,11 @@
     "validate": "node tools/validate.mjs",
     "extract": "node tools/extract.mjs",
     "generate:css": "node tools/generate-css.mjs",
-    "generate": "npm run generate:css"
+    "generate:js": "node tools/generate-js.mjs",
+    "generate:py": "node tools/generate-py.mjs",
+    "generate:game": "node tools/generate-game.mjs",
+    "generate:gallery": "node tools/generate-gallery.mjs",
+    "generate": "npm run generate:css && npm run generate:js && npm run generate:py && npm run generate:game && npm run generate:gallery"
   },
   "devDependencies": {
     "ajv": "^8.17.1"

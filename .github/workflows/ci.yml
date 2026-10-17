@@ -57,6 +57,12 @@ jobs:
             exit 1
           fi
           echo "OK: dist/ is up to date."
+      - name: Upload gallery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tol-palettes-gallery
+          path: dist/gallery/
+          retention-days: 14
 
   # `npm run extract -- --check` compares the data with upstream and is meant for
   # scheduled or manual runs, not pull requests.
