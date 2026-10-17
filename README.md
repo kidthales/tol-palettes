@@ -1,12 +1,64 @@
-# tol-palettes
+# @kidthales/tol-palettes
 
-Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronpersonalpages.nl/~pault/), with multi-environment generators. Independent project: not affiliated with or endorsed by Paul Tol.
+[![CI](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml/badge.svg)](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
+[![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
+
+Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronpersonalpages.nl/~pault/), with multi-environment generators for **CSS**, **JavaScript / TypeScript**, **Python (`matplotlib`)**, **Godot 4.x**, and **GIMP / Aseprite**.
+
+> *Independent project: not affiliated with or endorsed by Paul Tol.*
+
+---
 
 ## Scope & Policy
 
-- **Values only, with attribution.** The project stores colour values and structural lookup rules (`data/schemes/*.json`); it does not copy the notes' prose, figures, the PDF or the LaTeX template.
+- **Values only, with attribution.** The project stores colour values and structural lookup rules (`data/schemes/*.json`); it does not copy the notes' prose, figures, the PDF, or the LaTeX template.
 - **No invented names.** A colour name appears only when the official `tol_colors.py` module provides one (the 6 qualitative schemes: `bright`, `high-contrast`, `vibrant`, `muted`, `medium-contrast`, `light`).
 - **Single source of truth.** One hand-verified JSON file per scheme (22 schemes total) is the only canonical data layer; every environment output in `dist/` is deterministically generated from it.
+
+---
+
+## Installation & Quickstart
+
+```bash
+npm install @kidthales/tol-palettes
+```
+
+### JavaScript / TypeScript (ESM)
+```ts
+import { bright, muted, interpolate, discreteRainbow } from '@kidthales/tol-palettes';
+
+console.log(bright.colors); // [{ hex: '#4477AA', name: 'blue' }, ...]
+console.log(interpolate('sunset', 0.5)); // '#FEDA8B'
+console.log(discreteRainbow(5)); // ['#1965B0', '#7BAFDE', '#4EB265', '#F7CB45', '#DC050C']
+```
+
+### CSS Custom Properties (`--tol-*`)
+```css
+/* Import an individual scheme or the full 22-scheme bundle */
+@import '@kidthales/tol-palettes/css/bright.css';
+@import '@kidthales/tol-palettes/css/tol.css';
+
+.callout {
+  background-color: var(--tol-pale-0);
+  color: var(--tol-dark-3);
+  border-left: 4px solid var(--tol-bright-blue);
+}
+```
+
+### Python (`tol_palettes.py`)
+```python
+from tol_palettes import tol_cset, tol_cmap
+
+bright = tol_cset("bright")
+cmap = tol_cmap("sunset")  # Returns matplotlib colormap when matplotlib is installed
+```
+
+### Godot 4.x & Pixel Art (`dist/godot/`, `dist/aseprite/`, `dist/gpl/`)
+- Load `dist/godot/<scheme>.tres` directly as a Godot `ColorPalette` resource in the editor color picker, or call `TolPalettes` constants from `dist/godot/tol_palettes.gd`.
+- Load `dist/aseprite/<scheme>.gpl` or `dist/gpl/<scheme>.gpl` in Aseprite, GIMP, Inkscape, or Krita.
+
+---
 
 ## Layout & Generated Outputs
 
@@ -19,14 +71,20 @@ Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronp
 | `dist/gpl/`, `dist/aseprite/`, `dist/godot/` | `npm run generate:game` | GIMP/Aseprite `.gpl` palettes, Godot 4.x `tol_palettes.gd` and `ColorPalette` `.tres` resources — see [`docs/game.md`](docs/game.md) |
 | `dist/gallery/` | `npm run generate:gallery` | Self-contained offline HTML reference gallery (`index.html`) with copyable hex codes and WCAG contrast ratios |
 
-## Regenerating & Testing
+---
+
+## Regenerating, Linting & Testing
 
 ```bash
+npm run lint       # Validate schemas, JS syntax, attribution headers, and export resolution
 npm run validate   # Validate all 22 scheme JSON files against schema + invariants
 npm run generate   # Regenerate all outputs in dist/
-npm test           # Run full schema, CSS, JS/TS, Python, Game/Godot/GPL and Gallery test suite
+npm test           # Run full linter, schema, CSS, JS/TS, Python, Game/Godot/GPL, Gallery, and packaging test suite
 ```
 
-## Attribution
+---
 
-Sources: [Paul Tol's Notes](https://sronpersonalpages.nl/~pault/) and `tol_colors.py` (version 2022.10, Copyright (c) 2022, Paul Tol, 3-clause BSD). See [`NOTICE`](NOTICE) for full attribution and the BSD licence notice, and [`docs/cvd-and-greyscale-scope.md`](docs/cvd-and-greyscale-scope.md) for the scope decision on colour-blindness and greyscale reference material.
+## License & Attribution
+
+- **Project Code & Generators**: [BSD 3-Clause License](LICENSE) (`Copyright (c) 2026, kidthales`).
+- **Colour Scheme Data**: Sourced from [Paul Tol's Notes](https://sronpersonalpages.nl/~pault/) and `tol_colors.py` (version 2022.10, `Copyright (c) 2022, Paul Tol`, 3-Clause BSD). See [`NOTICE`](NOTICE) for full attribution and the BSD licence notice, and [`docs/cvd-and-greyscale-scope.md`](docs/cvd-and-greyscale-scope.md) for the scope decision on colour-blindness and greyscale reference material.

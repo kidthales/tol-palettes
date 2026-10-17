@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,10 +15,10 @@ jobs:
     name: No tracked agent files
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fail if agent or learnings paths are tracked
         run: |
-          bad=$(git ls-files | grep -E '^(\.agents?/|\.gemini/|\.ai/|\.cursor/|\.claude/|docs/learnings/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)' || true)
+          bad=$(git ls-files | grep -E '^(\.agents?/|\.gemini/|\.ai/|\.cursor/|\.claude/|scratch/|docs/learnings/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)' || true)
           if [ -n "$bad" ]; then
             echo "Agent or learnings files must not be tracked:"
             echo "$bad"
@@ -25,24 +27,30 @@ jobs:
           echo "OK: no agent or learnings files are tracked."
 
   test:
-    name: Validate and test
+    name: Lint, Validate & Test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm run validate
       - run: npm test
+      - run: npm pack --dry-run
 
   generated:
     name: Generated outputs are up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -58,33 +66,57 @@ jobs:
           fi
           echo "OK: dist/ is up to date."
       - name: Upload gallery artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tol-palettes-gallery
           path: dist/gallery/
           retention-days: 14
 
-  # `npm run extract -- --check` compares the data with upstream and is meant for
-  # scheduled or manual runs, not pull requests.
-
   notify:
-    name: Notify
+    name: Discord CI Notification
     if: always()
     needs: [no-agent-files, test, generated]
     runs-on: ubuntu-latest
     steps:
-      - name: Post consolidated status to Discord
+      - name: Dispatch consolidated status card to #dev-ci-builds
+        if: env.WEBHOOK_URL != ''
         env:
-          WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
-          RESULTS: ${{ join(needs.*.result, ',') }}
-          REPO: ${{ github.repository }}
-          REF: ${{ github.ref_name }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK_URL: ${{ secrets.DISCORD_CI_WEBHOOK }}
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "No webhook configured; skipping."; exit 0; fi
-          case "$RESULTS" in
-            *failure*) title="CI failed"; color=15088454 ;;
-            *cancelled*) title="CI cancelled"; color=15088454 ;;
-            *) title="CI passed"; color=4388484 ;;
-          esac
-          curl -sS -H "Content-Type: application/json" -d "{\"embeds\":[{\"title\":\"$title\",\"description\":\"$REPO ($REF)\\n[View run]($RUN_URL)\",\"color\":$color}]}" "$WEBHOOK"
+          if [ "$JOB_STATUS" = "success" ]; then
+            COLOR=2263091
+            TITLE="✅ CI Passed — tol-palettes"
+          elif [ "$JOB_STATUS" = "cancelled" ]; then
+            COLOR=11184810
+            TITLE="⚪ CI Cancelled — tol-palettes"
+          else
+            COLOR=15087942
+            TITLE="❌ CI Failed — tol-palettes"
+          fi
+
+          jq -n \
+            --arg title "$TITLE" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg sha "${{ github.sha }}" \
+            --argjson color "$COLOR" \
+            '{
+              username: "kidthales CI",
+              avatar_url: "https://kidthales.com/favicon-96x96.png",
+              embeds: [{
+                title: $title,
+                url: $url,
+                color: $color,
+                fields: [
+                  { name: "Repository", value: $repo, inline: true },
+                  { name: "Branch", value: $branch, inline: true },
+                  { name: "Commit", value: ($sha | .[0:7]), inline: true }
+                ],
+                footer: {
+                  text: "GitHub Actions • tol-palettes",
+                  icon_url: "https://kidthales.com/favicon-96x96.png"
+                }
+              }]
+            }' | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"
