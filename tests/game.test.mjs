@@ -111,4 +111,16 @@ test('dist/godot contains valid ColorPalette .tres files and tol_palettes.gd wit
   for (const unnamed of ['DARK_', 'PALE_', 'GROUNDCOVER_', 'INCANDESCENT_', 'BANDED_']) {
     assert.ok(!constMatches.some(([, name]) => name.startsWith(unnamed)), `unexpected constant starting with ${unnamed}`);
   }
+
+  // Assert lut_bad and helper get_discrete_rainbow_bad
+  assert.match(gd, /"lut_bad":\s*\{\s*"23":\s*Color\("#777777"\)\s*\}/);
+  assert.match(gd, /static func get_discrete_rainbow_bad\(n: int\) -> Color:/);
+
+  // Assert subranges metadata in rainbow-smooth
+  assert.match(gd, /"rainbow-smooth":\s*\{[\s\S]*?"subranges":\s*\[/);
+  assert.match(gd, /"id":\s*"rainbow_WhRd"/);
+  assert.match(gd, /"id":\s*"rainbow_WhBr"/);
+  assert.match(gd, /"id":\s*"rainbow_PuRd"/);
+  assert.match(gd, /"id":\s*"rainbow_PuBr"/);
 });
+
