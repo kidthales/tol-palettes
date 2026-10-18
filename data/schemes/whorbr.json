@@ -33,7 +33,7 @@
   "bad": "#888888",
   "interpolation": "linear",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "module": "tol_cmap('WhOrBr')",
     "moduleName": "WhOrBr",
     "moduleVersion": "2022.10",

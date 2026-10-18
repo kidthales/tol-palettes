@@ -49,7 +49,7 @@ export const banded12 = {
   "bad": "#FFFFFF",
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_banded",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_banded"
   }
@@ -111,7 +111,7 @@ export const banded16 = {
   "bad": "#FFFFFF",
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_banded",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_banded"
   }
@@ -185,7 +185,7 @@ export const banded20 = {
   "bad": "#FFFFFF",
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_banded",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_banded"
   }
@@ -232,7 +232,7 @@ export const bright = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_bright",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_bright",
     "module": "tol_cset('bright')",
@@ -275,7 +275,7 @@ export const burd = {
   "bad": "#FFEE99",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_burd",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_burd",
     "module": "tol_cmap('BuRd')",
@@ -324,7 +324,7 @@ export const dark = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_dark",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_dark"
   }
@@ -379,7 +379,7 @@ export const groundcover = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_groundcover",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_groundcover"
   }
@@ -410,7 +410,7 @@ export const highContrast = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_highcontrast",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_highcontrast",
     "module": "tol_cset('high-contrast')",
@@ -459,7 +459,7 @@ export const incandescent = {
   "bad": "#888888",
   "interpolation": "linear",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_incandescent",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_incandescent"
   }
@@ -542,7 +542,7 @@ export const iridescent = {
   "bad": "#999999",
   "interpolation": "linear",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_iridescent",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_iridescent",
     "module": "tol_cmap('iridescent')",
@@ -600,7 +600,7 @@ export const light = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_light",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_light",
     "module": "tol_cset('light')",
@@ -645,7 +645,7 @@ export const mediumContrast = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_mediumcontrast",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_mediumcontrast",
     "module": "tol_cset('medium-contrast')",
@@ -707,7 +707,7 @@ export const muted = {
   "bad": "#DDDDDD",
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_muted",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_muted",
     "module": "tol_cset('muted')",
@@ -774,7 +774,7 @@ export const nightfall = {
   "bad": "#FFFFFF",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_nightfall",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_nightfall",
     "module": "tol_cmap('nightfall')",
@@ -822,7 +822,7 @@ export const pale = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_marking",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_marking"
   }
@@ -863,7 +863,7 @@ export const prgn = {
   "bad": "#FFEE99",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_prgn",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_prgn",
     "module": "tol_cmap('PRGn')",
@@ -1294,7 +1294,7 @@ export const rainbowDiscrete = {
     "23": "#777777"
   },
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_rainbow_discrete",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_rainbow_discrete",
     "module": "tol_cmap('rainbow_discrete', lut)",
@@ -1439,7 +1439,7 @@ export const rainbowSmooth = {
     }
   ],
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_rainbow_smooth",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_rainbow_smooth",
     "module": "tol_cmap('rainbow_*')",
@@ -1488,7 +1488,7 @@ export const sunset = {
   "bad": "#FFFFFF",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_sunset",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_sunset",
     "module": "tol_cmap('sunset')",
@@ -1538,7 +1538,7 @@ export const vibrant = {
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_vibrant",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_vibrant",
     "module": "tol_cset('vibrant')",
@@ -1581,7 +1581,7 @@ export const whorbr = {
   "bad": "#888888",
   "interpolation": "linear",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "module": "tol_cmap('WhOrBr')",
     "moduleName": "WhOrBr",
     "moduleVersion": "2022.10",
@@ -1626,7 +1626,7 @@ export const ylorbr = {
   "bad": "#888888",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_ylorbr",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_ylorbr",
     "module": "tol_cmap('YlOrBr')",

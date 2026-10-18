@@ -39,7 +39,7 @@
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_vibrant",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_vibrant",
     "module": "tol_cset('vibrant')",
