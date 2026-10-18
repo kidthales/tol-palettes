@@ -856,6 +856,11 @@
         background: var(--surface);
         color: var(--fg);
         cursor: pointer;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+      .copy-btn.copied {
+        border-color: var(--focus);
+        background: var(--surface);
       }
       .contrast-list {
         margin: 0;
@@ -882,10 +887,12 @@
         width: 1px;
         height: 1px;
         padding: 0;
-        margin: -1px;
+        margin: 0;
         overflow: hidden;
         clip: rect(0, 0, 0, 0);
+        clip-path: inset(50%);
         border: 0;
+        white-space: nowrap;
       }
     </style>
   </head>
@@ -939,7 +946,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>7</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('bright')</code> (2022.10) + <code>fig:scheme_bright</code></span>
+              <span>Source: <code>tol_cset(&#39;bright&#39;)</code> (2022.10) + <code>fig:scheme_bright</code></span>
             </p>
           </div>
         </header>
@@ -1264,7 +1271,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>3</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('high-contrast')</code> (2022.10) + <code>fig:scheme_highcontrast</code></span>
+              <span>Source: <code>tol_cset(&#39;high-contrast&#39;)</code> (2022.10) + <code>fig:scheme_highcontrast</code></span>
             </p>
           </div>
         </header>
@@ -1346,7 +1353,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('light')</code> (2022.10) + <code>fig:scheme_light</code></span>
+              <span>Source: <code>tol_cset(&#39;light&#39;)</code> (2022.10) + <code>fig:scheme_light</code></span>
             </p>
           </div>
         </header>
@@ -1518,7 +1525,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>6</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('medium-contrast')</code> (2022.10) + <code>fig:scheme_mediumcontrast</code></span>
+              <span>Source: <code>tol_cset(&#39;medium-contrast&#39;)</code> (2022.10) + <code>fig:scheme_mediumcontrast</code></span>
             </p>
           </div>
         </header>
@@ -1645,7 +1652,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('muted')</code> (2022.10) + <code>fig:scheme_muted</code></span>
+              <span>Source: <code>tol_cset(&#39;muted&#39;)</code> (2022.10) + <code>fig:scheme_muted</code></span>
             </p>
           </div>
         </header>
@@ -1974,7 +1981,7 @@
               <span>Kind: <strong>qualitative</strong></span> ·
               <span>Stops: <strong>7</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cset('vibrant')</code> (2022.10) + <code>fig:scheme_vibrant</code></span>
+              <span>Source: <code>tol_cset(&#39;vibrant&#39;)</code> (2022.10) + <code>fig:scheme_vibrant</code></span>
             </p>
           </div>
         </header>
@@ -2120,7 +2127,7 @@
               <span>Kind: <strong>diverging</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>either</strong></span> ·
-              <span>Source: <code>tol_cmap('BuRd')</code> (2022.10) + <code>fig:scheme_burd</code></span>
+              <span>Source: <code>tol_cmap(&#39;BuRd&#39;)</code> (2022.10) + <code>fig:scheme_burd</code></span>
             </p>
           </div>
         </header>
@@ -2292,7 +2299,7 @@
               <span>Kind: <strong>diverging</strong></span> ·
               <span>Stops: <strong>17</strong></span> ·
               <span>Interpolation: <strong>either</strong></span> ·
-              <span>Source: <code>tol_cmap('nightfall')</code> (2022.10) + <code>fig:scheme_nightfall</code></span>
+              <span>Source: <code>tol_cmap(&#39;nightfall&#39;)</code> (2022.10) + <code>fig:scheme_nightfall</code></span>
             </p>
           </div>
         </header>
@@ -2584,7 +2591,7 @@
               <span>Kind: <strong>diverging</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>either</strong></span> ·
-              <span>Source: <code>tol_cmap('PRGn')</code> (2022.10) + <code>fig:scheme_prgn</code></span>
+              <span>Source: <code>tol_cmap(&#39;PRGn&#39;)</code> (2022.10) + <code>fig:scheme_prgn</code></span>
             </p>
           </div>
         </header>
@@ -2756,7 +2763,7 @@
               <span>Kind: <strong>diverging</strong></span> ·
               <span>Stops: <strong>11</strong></span> ·
               <span>Interpolation: <strong>either</strong></span> ·
-              <span>Source: <code>tol_cmap('sunset')</code> (2022.10) + <code>fig:scheme_sunset</code></span>
+              <span>Source: <code>tol_cmap(&#39;sunset&#39;)</code> (2022.10) + <code>fig:scheme_sunset</code></span>
             </p>
           </div>
         </header>
@@ -3995,7 +4002,7 @@
               <span>Kind: <strong>sequential</strong></span> ·
               <span>Stops: <strong>23</strong></span> ·
               <span>Interpolation: <strong>linear</strong></span> ·
-              <span>Source: <code>tol_cmap('iridescent')</code> (2022.10) + <code>fig:scheme_iridescent</code></span>
+              <span>Source: <code>tol_cmap(&#39;iridescent&#39;)</code> (2022.10) + <code>fig:scheme_iridescent</code></span>
             </p>
           </div>
         </header>
@@ -4377,7 +4384,7 @@
               <span>Kind: <strong>sequential</strong></span> ·
               <span>Stops: <strong>29</strong></span> ·
               <span>Interpolation: <strong>none</strong></span> ·
-              <span>Source: <code>tol_cmap('rainbow_discrete', lut)</code> (2022.10) + <code>fig:scheme_rainbow_discrete</code></span>
+              <span>Source: <code>tol_cmap(&#39;rainbow_discrete&#39;, lut)</code> (2022.10) + <code>fig:scheme_rainbow_discrete</code></span>
             </p>
           </div>
         </header>
@@ -4849,7 +4856,7 @@
               <span>Kind: <strong>sequential</strong></span> ·
               <span>Stops: <strong>34</strong></span> ·
               <span>Interpolation: <strong>linear</strong></span> ·
-              <span>Source: <code>tol_cmap('rainbow_*')</code> (2022.10) + <code>fig:scheme_rainbow_smooth</code></span>
+              <span>Source: <code>tol_cmap(&#39;rainbow_*&#39;)</code> (2022.10) + <code>fig:scheme_rainbow_smooth</code></span>
             </p>
           </div>
         </header>
@@ -5396,7 +5403,7 @@
               <span>Kind: <strong>sequential</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>linear</strong></span> ·
-              <span>Source: <code>tol_cmap('WhOrBr')</code> (2022.10)</span>
+              <span>Source: <code>tol_cmap(&#39;WhOrBr&#39;)</code> (2022.10)</span>
             </p>
           </div>
         </header>
@@ -5568,7 +5575,7 @@
               <span>Kind: <strong>sequential</strong></span> ·
               <span>Stops: <strong>9</strong></span> ·
               <span>Interpolation: <strong>either</strong></span> ·
-              <span>Source: <code>tol_cmap('YlOrBr')</code> (2022.10) + <code>fig:scheme_ylorbr</code></span>
+              <span>Source: <code>tol_cmap(&#39;YlOrBr&#39;)</code> (2022.10) + <code>fig:scheme_ylorbr</code></span>
             </p>
           </div>
         </header>
@@ -5991,6 +5998,14 @@
           try {
             await navigator.clipboard.writeText(hex);
             if (statusEl) statusEl.textContent = 'Copied ' + hex;
+            const codeEl = btn.querySelector('code');
+            const originalText = codeEl ? codeEl.textContent : btn.textContent;
+            btn.classList.add('copied');
+            if (codeEl) codeEl.textContent = 'Copied!';
+            setTimeout(() => {
+              btn.classList.remove('copied');
+              if (codeEl) codeEl.textContent = originalText;
+            }, 1200);
           } catch (_) {}
         });
       })();

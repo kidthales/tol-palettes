@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from '../tools/validate.mjs';
-import { generateGalleryHtml, contrastRatio } from '../tools/generate-gallery.mjs';
+import { generateGalleryHtml, contrastRatio, escapeHtml } from '../tools/generate-gallery.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const galleryPath = join(root, 'dist', 'gallery', 'index.html');
@@ -30,6 +30,16 @@ test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios 
   assert.match(html, /id="themeToggle"/);
   assert.match(html, /role="status"\s+aria-live="polite"/);
 
+  // Single-quote XSS escaping
+  assert.equal(escapeHtml("Paul Tol's"), 'Paul Tol&#39;s');
+  assert.equal(escapeHtml('<script>"foo" & \'bar\'</script>'), '&lt;script&gt;&quot;foo&quot; &amp; &#39;bar&#39;&lt;/script&gt;');
+
+  // Visual copy feedback and modern sr-status clip-path
+  assert.match(html, /\.copy-btn\.copied/);
+  assert.match(html, /btn\.classList\.add\('copied'\)/);
+  assert.match(html, /codeEl\.textContent = 'Copied!'/);
+  assert.match(html, /clip-path:\s*inset\(50%\)/);
+
   for (const s of schemes) {
     assert.match(html, new RegExp(`id="scheme-${s.id}"`));
     assert.match(html, new RegExp(`href="#scheme-${s.id}"`));
@@ -52,3 +62,4 @@ test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios 
     assert.ok(contrastRatio(c.hex, '#FFFFFF') >= 4.5, `dark scheme ${c.hex} contrast < 4.5 vs white`);
   }
 });
+
