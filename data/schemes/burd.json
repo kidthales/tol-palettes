@@ -33,7 +33,7 @@
   "bad": "#FFEE99",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_burd",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_burd",
     "module": "tol_cmap('BuRd')",

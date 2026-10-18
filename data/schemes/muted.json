@@ -52,7 +52,7 @@
   "bad": "#DDDDDD",
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_muted",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_muted",
     "module": "tol_cset('muted')",

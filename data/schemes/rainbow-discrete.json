@@ -420,7 +420,7 @@
     "23": "#777777"
   },
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_rainbow_discrete",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_rainbow_discrete",
     "module": "tol_cmap('rainbow_discrete', lut)",

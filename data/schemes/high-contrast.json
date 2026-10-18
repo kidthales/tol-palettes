@@ -23,7 +23,7 @@
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-16",
+    "retrieved": "2026-10-18",
     "siteFigure": "fig:scheme_highcontrast",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_highcontrast",
     "module": "tol_cset('high-contrast')",
