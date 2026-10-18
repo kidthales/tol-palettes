@@ -102,6 +102,16 @@ export function generateGodotScript(schemes = loadSchemes().map((x) => x.data)) 
     if (s.discreteIndexes) {
       lines.push(`\t\t"discrete_indexes": [${s.discreteIndexes.join(', ')}],`);
     }
+    if (s.lutBad) {
+      const badPairs = Object.entries(s.lutBad).map(([k, v]) => `"${k}": Color("${v}")`);
+      lines.push(`\t\t"lut_bad": { ${badPairs.join(', ')} },`);
+    }
+    if (s.subranges) {
+      const subEntries = s.subranges.map(
+        (sr) => `{"id": "${sr.id}", "from": ${sr.from}, "to": ${sr.to}, "bad": Color("${sr.bad}")}`,
+      );
+      lines.push(`\t\t"subranges": [${subEntries.join(', ')}],`);
+    }
     lines.push('\t},');
     return lines.join('\n');
   });
@@ -150,6 +160,12 @@ static func get_discrete_rainbow(n: int) -> PackedColorArray:
 \tfor idx in idxs:
 \t\tout.append(base[idx])
 \treturn out
+
+
+static func get_discrete_rainbow_bad(n: int) -> Color:
+\tif n == 23:
+\t\treturn Color("#777777")
+\treturn Color("#FFFFFF")
 `;
 }
 

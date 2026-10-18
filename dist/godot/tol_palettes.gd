@@ -195,6 +195,7 @@ const SCHEMES: Dictionary = {
 		"colors": PackedColorArray([Color("#E8ECFB"), Color("#D9CCE3"), Color("#D1BBD7"), Color("#CAACCB"), Color("#BA8DB4"), Color("#AE76A3"), Color("#AA6F9E"), Color("#994F88"), Color("#882E72"), Color("#1965B0"), Color("#437DBF"), Color("#5289C7"), Color("#6195CF"), Color("#7BAFDE"), Color("#4EB265"), Color("#90C987"), Color("#CAE0AB"), Color("#F7F056"), Color("#F7CB45"), Color("#F6C141"), Color("#F4A736"), Color("#F1932D"), Color("#EE8026"), Color("#E8601C"), Color("#E65518"), Color("#DC050C"), Color("#A5170E"), Color("#72190E"), Color("#42150A")]),
 		"hex": PackedStringArray(["#E8ECFB", "#D9CCE3", "#D1BBD7", "#CAACCB", "#BA8DB4", "#AE76A3", "#AA6F9E", "#994F88", "#882E72", "#1965B0", "#437DBF", "#5289C7", "#6195CF", "#7BAFDE", "#4EB265", "#90C987", "#CAE0AB", "#F7F056", "#F7CB45", "#F6C141", "#F4A736", "#F1932D", "#EE8026", "#E8601C", "#E65518", "#DC050C", "#A5170E", "#72190E", "#42150A"]),
 		"bad": Color("#FFFFFF"),
+		"lut_bad": { "23": Color("#777777") },
 	},
 	"rainbow-smooth": {
 		"id": "rainbow-smooth",
@@ -203,6 +204,7 @@ const SCHEMES: Dictionary = {
 		"colors": PackedColorArray([Color("#E8ECFB"), Color("#DDD8EF"), Color("#D1C1E1"), Color("#C3A8D1"), Color("#B58FC2"), Color("#A778B4"), Color("#9B62A7"), Color("#8C4E99"), Color("#6F4C9B"), Color("#6059A9"), Color("#5568B8"), Color("#4E79C5"), Color("#4D8AC6"), Color("#4E96BC"), Color("#549EB3"), Color("#59A5A9"), Color("#60AB9E"), Color("#69B190"), Color("#77B77D"), Color("#8CBC68"), Color("#A6BE54"), Color("#BEBC48"), Color("#D1B541"), Color("#DDAA3C"), Color("#E49C39"), Color("#E78C35"), Color("#E67932"), Color("#E4632D"), Color("#DF4828"), Color("#DA2222"), Color("#B8221E"), Color("#95211B"), Color("#721E17"), Color("#521A13")]),
 		"hex": PackedStringArray(["#E8ECFB", "#DDD8EF", "#D1C1E1", "#C3A8D1", "#B58FC2", "#A778B4", "#9B62A7", "#8C4E99", "#6F4C9B", "#6059A9", "#5568B8", "#4E79C5", "#4D8AC6", "#4E96BC", "#549EB3", "#59A5A9", "#60AB9E", "#69B190", "#77B77D", "#8CBC68", "#A6BE54", "#BEBC48", "#D1B541", "#DDAA3C", "#E49C39", "#E78C35", "#E67932", "#E4632D", "#DF4828", "#DA2222", "#B8221E", "#95211B", "#721E17", "#521A13"]),
 		"bad": Color("#666666"),
+		"subranges": [{"id": "rainbow_WhRd", "from": 0, "to": 29, "bad": Color("#666666")}, {"id": "rainbow_WhBr", "from": 0, "to": 33, "bad": Color("#666666")}, {"id": "rainbow_PuRd", "from": 8, "to": 29, "bad": Color("#FFFFFF")}, {"id": "rainbow_PuBr", "from": 8, "to": 33, "bad": Color("#FFFFFF")}],
 	},
 	"sunset": {
 		"id": "sunset",
@@ -291,3 +293,9 @@ static func get_discrete_rainbow(n: int) -> PackedColorArray:
 	for idx in idxs:
 		out.append(base[idx])
 	return out
+
+
+static func get_discrete_rainbow_bad(n: int) -> Color:
+	if n == 23:
+		return Color("#777777")
+	return Color("#FFFFFF")

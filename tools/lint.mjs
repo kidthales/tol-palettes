@@ -39,7 +39,7 @@ for (const dirName of ['tools', 'tests']) {
 }
 
 // 3. Attribution header check across dist/ outputs
-const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite'];
+const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite', 'gallery', 'json'];
 for (const sub of distCheckDirs) {
   const subPath = join(root, 'dist', sub);
   if (!existsSync(subPath)) {

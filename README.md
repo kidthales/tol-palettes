@@ -20,17 +20,30 @@ Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronp
 
 ## Installation & Quickstart
 
+### Installation
+
+Install `@kidthales/tol-palettes` from GitHub Packages. Add the `@kidthales` scope to your project `.npmrc`:
+
+```ini
+@kidthales:registry=https://npm.pkg.github.com
+```
+
+Then install via npm:
+
 ```bash
 npm install @kidthales/tol-palettes
 ```
+
+> [!NOTE]
+> **SemVer 2.0.0 Pre-release**: Per SemVer 2.0.0 §4, versions in the `0.y.z` range denote initial development releases with evolving APIs. True stable releases begin at `v1.0.0`.
 
 ### JavaScript / TypeScript (ESM)
 ```ts
 import { bright, muted, interpolate, discreteRainbow } from '@kidthales/tol-palettes';
 
 console.log(bright.colors); // [{ hex: '#4477AA', name: 'blue' }, ...]
-console.log(interpolate('sunset', 0.5)); // '#FEDA8B'
-console.log(discreteRainbow(5)); // ['#1965B0', '#7BAFDE', '#4EB265', '#F7CB45', '#DC050C']
+console.log(interpolate('sunset', 0.5)); // '#EAECCC'
+console.log(discreteRainbow(5)); // ['#1965B0', '#7BAFDE', '#4EB265', '#F7F056', '#DC050C']
 ```
 
 ### CSS Custom Properties (`--tol-*`)
