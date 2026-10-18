@@ -23,12 +23,18 @@ test('npm pack --dry-run enforces size budgets and excludes dev/CI files', () =>
   assert.ok(paths.includes('dist/js/index.js'), 'dist/js/index.js must be included');
   assert.ok(paths.includes('dist/js/index.d.ts'), 'dist/js/index.d.ts must be included');
   assert.ok(paths.includes('dist/css/tol.css'), 'dist/css/tol.css must be included');
+  assert.ok(paths.includes('dist/py/tol_palettes.py'), 'dist/py/tol_palettes.py must be included');
 
   for (const p of paths) {
     assert.doesNotMatch(
       p,
       /^(\.github|tests|tools|docs|dist\/gallery)\//,
       `Dev/CI/gallery file "${p}" must not leak into npm tarball`,
+    );
+    assert.doesNotMatch(
+      p,
+      /(\.pyc$|__pycache__)/,
+      `Python bytecode file "${p}" must not leak into npm tarball`,
     );
   }
 });

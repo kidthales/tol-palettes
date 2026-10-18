@@ -77,11 +77,12 @@ jobs:
     if: always()
     needs: [no-agent-files, test, generated]
     runs-on: ubuntu-latest
+    env:
+      WEBHOOK_URL: ${{ secrets.DISCORD_CI_WEBHOOK }}
     steps:
       - name: Dispatch consolidated status card to #dev-ci-builds
         if: env.WEBHOOK_URL != ''
         env:
-          WEBHOOK_URL: ${{ secrets.DISCORD_CI_WEBHOOK }}
           JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
@@ -119,4 +120,5 @@ jobs:
                   icon_url: "https://kidthales.com/favicon-96x96.png"
                 }
               }]
-            }' | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL"
+            }' | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" || echo "Discord notification failed (non-blocking)"
+
