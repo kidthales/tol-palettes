@@ -1,8 +1,10 @@
 {
   "name": "@kidthales/tol-palettes",
   "version": "0.1.0",
-  "private": true,
   "description": "Paul Tol colour scheme data (values only, with attribution) and generators for CSS, JS/TS, Python, Godot, and GPL/Aseprite.",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "license": "BSD-3-Clause",
   "author": "kidthales",
   "type": "module",
