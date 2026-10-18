@@ -27,12 +27,13 @@ export function contrastRatio(hexA, hexB) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderSwatchCard(schemeId, color, labelPrefix, cssVar) {
@@ -265,6 +266,11 @@ ${cssTokens}
         background: var(--surface);
         color: var(--fg);
         cursor: pointer;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+      .copy-btn.copied {
+        border-color: var(--focus);
+        background: var(--surface);
       }
       .contrast-list {
         margin: 0;
@@ -291,10 +297,12 @@ ${cssTokens}
         width: 1px;
         height: 1px;
         padding: 0;
-        margin: -1px;
+        margin: 0;
         overflow: hidden;
         clip: rect(0, 0, 0, 0);
+        clip-path: inset(50%);
         border: 0;
+        white-space: nowrap;
       }
     </style>
   </head>
@@ -344,6 +352,14 @@ ${kindSections}
           try {
             await navigator.clipboard.writeText(hex);
             if (statusEl) statusEl.textContent = 'Copied ' + hex;
+            const codeEl = btn.querySelector('code');
+            const originalText = codeEl ? codeEl.textContent : btn.textContent;
+            btn.classList.add('copied');
+            if (codeEl) codeEl.textContent = 'Copied!';
+            setTimeout(() => {
+              btn.classList.remove('copied');
+              if (codeEl) codeEl.textContent = originalText;
+            }, 1200);
           } catch (_) {}
         });
       })();
