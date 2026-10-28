@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml/badge.svg)](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml)
 [![Pages](https://github.com/kidthales/tol-palettes/actions/workflows/pages.yml/badge.svg)](https://tol-palettes.kidthales.com)
+[![npm version](https://img.shields.io/npm/v/@kidthales/tol-palettes.svg)](https://www.npmjs.com/package/@kidthales/tol-palettes)
+[![PyPI version](https://img.shields.io/pypi/v/tol-palettes.svg)](https://pypi.org/project/tol-palettes/)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
 [![DOI](https://img.shields.io/badge/citation-CITATION.cff-informational.svg)](CITATION.cff)
