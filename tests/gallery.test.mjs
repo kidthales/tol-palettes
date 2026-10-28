@@ -77,3 +77,51 @@ test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios 
   }
 });
 
+test('canvas preview theme tokens and button contrast ratios meet WCAG AAA without masking swatches', () => {
+  const html = readFileSync(galleryPath, 'utf8');
+
+  // Swatch chips must not have destructive linear gradients that mask colors
+  assert.doesNotMatch(html, /\.swatch-chip\s*\{[^}]*background-image/);
+  assert.doesNotMatch(html, /\[data-canvas=[^\]]+\]\s*\.swatch-chip/);
+
+  // Scoped --canvas-* tokens defined on :root and canvas modes
+  assert.match(html, /--canvas-bg:\s*var\(--bg\);/);
+  assert.match(html, /--canvas-card-bg:\s*var\(--bg\);/);
+  assert.match(html, /--canvas-fg:\s*var\(--fg\);/);
+  assert.match(html, /--canvas-muted:\s*var\(--muted\);/);
+  assert.match(html, /--canvas-border:\s*var\(--border\);/);
+
+  assert.match(html, /:root\[data-canvas='light'\]\s*\{[^}]*--canvas-bg:\s*#FFFFFF/);
+  assert.match(html, /:root\[data-canvas='neutral'\]\s*\{[^}]*--canvas-bg:\s*#888888/);
+  assert.match(html, /:root\[data-canvas='dark'\]\s*\{[^}]*--canvas-bg:\s*#111111/);
+
+  // Active canvas toggle button contrast must be >= 7:1 (WCAG AAA)
+  assert.match(
+    html,
+    /\.canvas-btn\[aria-pressed='true'\]\s*\{[^}]*background:\s*var\(--fg\);[^}]*color:\s*var\(--bg\);[^}]*border-color:\s*var\(--fg\);[^}]*font-weight:\s*700;/
+  );
+
+  // Light mode active button: #000000 on #FFFFFF (21:1 >= 7:1)
+  assert.ok(contrastRatio('#000000', '#FFFFFF') >= 7.0);
+
+  // Dark mode active button: #FFFFFF on #000000 (21:1 >= 7:1)
+  assert.ok(contrastRatio('#FFFFFF', '#000000') >= 7.0);
+
+  // Canvas text contrast: Light canvas (21:1)
+  assert.ok(contrastRatio('#000000', '#FFFFFF') >= 7.0);
+  // Dark canvas (18.45:1)
+  assert.ok(contrastRatio('#FFFFFF', '#111111') >= 7.0);
+  // Neutral canvas (5.92:1 >= 4.5:1 WCAG AA)
+  assert.ok(contrastRatio('#000000', '#888888') >= 4.5);
+  // Neutral canvas muted (5.20:1 >= 4.5:1 WCAG AA)
+  assert.ok(contrastRatio('#111111', '#888888') >= 4.5);
+
+  // Scheme cards and swatch cards must use canvas tokens
+  assert.match(html, /\.scheme-card\s*\{[^}]*background:\s*var\(--canvas-bg\);/);
+  assert.match(html, /\.scheme-card\s*\{[^}]*color:\s*var\(--canvas-fg\);/);
+  assert.match(html, /\.scheme-card\s*\{[^}]*border:\s*1px solid var\(--canvas-border\);/);
+  assert.match(html, /\.swatch-card\s*\{[^}]*background:\s*var\(--canvas-card-bg\);/);
+  assert.match(html, /\.swatch-card\s*\{[^}]*color:\s*var\(--canvas-fg\);/);
+  assert.match(html, /\.swatch-card\s*\{[^}]*border:\s*1px solid var\(--canvas-border\);/);
+  assert.match(html, /\.swatch-chip\s*\{[^}]*border-block-end:\s*1px solid var\(--canvas-border\);/);
+});
