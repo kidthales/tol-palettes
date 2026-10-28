@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tol-palettes"
+version = "0.1.1"
+description = "Paul Tol colour scheme data and generators for accessible, colorblind-safe palettes."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "BSD-3-Clause"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    { name = "kidthales" },
+]
+keywords = [
+    "paul-tol",
+    "color-schemes",
+    "colorblind-safe",
+    "palettes",
+    "dataviz",
+    "accessible",
+    "matplotlib",
+    "wcag",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.optional-dependencies]
+matplotlib = ["matplotlib>=3.5.0"]
+
+[project.urls]
+Homepage = "https://github.com/kidthales/tol-palettes#readme"
+Documentation = "https://tol-palettes.kidthales.com"
+Repository = "https://github.com/kidthales/tol-palettes.git"
+Issues = "https://github.com/kidthales/tol-palettes/issues"
+Changelog = "https://github.com/kidthales/tol-palettes/blob/main/CHANGELOG.md"
+
+[tool.hatch.build]
+exclude = [
+    "!/dist",
+    "!/dist/py/tol_palettes.py",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dist/py/tol_palettes.py" = "tol_palettes.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "dist/py/tol_palettes.py",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "pyproject.toml",
+]

@@ -146,6 +146,38 @@ try {
         throw "Gate 3 Failed: Package packaging dry-run failed."
     }
 
+    Write-Host "  -> Running Python packaging verification (python -m build, wheel import)..." -ForegroundColor DarkGray
+    $pyTmp = New-Item -ItemType Directory -Path "$([System.IO.Path]::GetTempPath())tol_py_build_$([System.Guid]::NewGuid().ToString('N'))"
+    try {
+        & python -m build --no-isolation --outdir $pyTmp.FullName
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "python -m build failed with exit code $LASTEXITCODE."
+            throw "Gate 3 Failed: Python build failed."
+        }
+
+        $wheels = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.whl")
+        $sdists = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.tar.gz")
+        if ($wheels.Count -eq 0 -or $sdists.Count -eq 0) {
+            Write-Fail "Expected .whl and .tar.gz distributions in build output."
+            throw "Gate 3 Failed: Missing wheel or sdist distribution."
+        }
+
+        # Verify wheel top-level module structure and execution
+        $pyExtract = Join-Path $pyTmp.FullName "extracted"
+        Expand-Archive -Path $wheels[0].FullName -DestinationPath $pyExtract -Force
+        & python -c "import sys; sys.path.insert(0, sys.argv[1]); import tol_palettes; cset = tol_palettes.tol_cset('bright'); assert len(cset.blue) == 7" $pyExtract
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "Wheel import or functional execution test failed."
+            throw "Gate 3 Failed: Python wheel import test failed."
+        }
+        Write-Host "     * Python sdist & wheel packaging verified successfully" -ForegroundColor Green
+    } finally {
+        if (Test-Path $pyTmp.FullName) {
+            Remove-Item -Recurse -Force $pyTmp.FullName
+        }
+    }
+
+
     Write-Pass "Test suite and packaging dry-run passed." $StepTimer
 
     # -------------------------------------------------------------
@@ -186,3 +218,4 @@ try {
 } finally {
     Pop-Location
 }
+

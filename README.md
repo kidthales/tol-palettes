@@ -45,6 +45,21 @@ Then install:
 npm install @kidthales/tol-palettes
 ```
 
+
+#### PyPI (Python Package)
+
+Install directly from PyPI into your virtualenv or project:
+
+```bash
+pip install tol-palettes
+```
+
+With optional `matplotlib` colormap integration:
+
+```bash
+pip install "tol-palettes[matplotlib]"
+```
+
 #### CDN Delivery (jsDelivr / unpkg)
 
 You can load CSS stylesheets, JavaScript modules, or JSON data directly in the browser via CDN without a build step:
@@ -139,3 +154,4 @@ npm test           # Run full linter, schema, CSS, JS/TS, Python, Game/Godot/GPL
 
 - **Project Code & Generators**: [BSD 3-Clause License](LICENSE) (`Copyright (c) 2026, kidthales`).
 - **Colour Scheme Data**: Sourced from [Paul Tol's Notes](https://sronpersonalpages.nl/~pault/) and `tol_colors.py` (version 2022.10, `Copyright (c) 2022, Paul Tol`, 3-Clause BSD). See [`NOTICE`](NOTICE) for full attribution and the BSD licence notice, and [`docs/cvd-and-greyscale-scope.md`](docs/cvd-and-greyscale-scope.md) for the scope decision on colour-blindness and greyscale reference material.
+

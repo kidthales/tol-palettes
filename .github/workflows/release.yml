@@ -104,3 +104,34 @@ jobs:
             npm publish --registry=https://npm.pkg.github.com/
             echo "Successfully published ${PKG_NAME}@${PKG_VER} to GitHub Packages."
           fi
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tol-palettes
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tool
+        run: python -m pip install --upgrade pip build
+
+      - name: Build sdist and wheel
+        run: python -m build --outdir dist_pypi/
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist_pypi/
+
