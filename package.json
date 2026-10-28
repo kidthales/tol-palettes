@@ -74,7 +74,8 @@
     "generate:py": "node tools/generate-py.mjs",
     "generate:game": "node tools/generate-game.mjs",
     "generate:gallery": "node tools/generate-gallery.mjs",
-    "generate": "npm run generate:css && npm run generate:js && npm run generate:py && npm run generate:game && npm run generate:gallery"
+    "generate": "npm run generate:css && npm run generate:js && npm run generate:py && npm run generate:game && npm run generate:gallery",
+    "ci:local": "pwsh -NoProfile -ExecutionPolicy Bypass ./scripts/ci-local.ps1"
   },
   "devDependencies": {
     "ajv": "^8.17.1"
