@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/kidthales/tol-palettes/discussions
+    about: Ask questions, share ideas, or discuss color schemes with the community.
+  - name: Interactive Gallery & Documentation
+    url: https://tol-palettes.kidthales.com
+    about: Explore visual palettes, contrast ratios, and implementation guides.

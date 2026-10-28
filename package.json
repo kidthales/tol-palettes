@@ -3,7 +3,8 @@
   "version": "0.1.1",
   "description": "Paul Tol colour scheme data (values only, with attribution) and generators for CSS, JS/TS, Python, Godot, and GPL/Aseprite.",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "license": "BSD-3-Clause",
   "author": "kidthales",
@@ -72,8 +73,10 @@
     "generate:js": "node tools/generate-js.mjs",
     "generate:py": "node tools/generate-py.mjs",
     "generate:game": "node tools/generate-game.mjs",
+    "package:assets": "node tools/package-assets.mjs",
     "generate:gallery": "node tools/generate-gallery.mjs",
-    "generate": "npm run generate:css && npm run generate:js && npm run generate:py && npm run generate:game && npm run generate:gallery"
+    "generate": "npm run generate:css && npm run generate:js && npm run generate:py && npm run generate:game && npm run package:assets && npm run generate:gallery",
+    "ci:local": "pwsh -NoProfile -ExecutionPolicy Bypass ./scripts/ci-local.ps1"
   },
   "devDependencies": {
     "ajv": "^8.17.1"

@@ -10,6 +10,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Paul Tol Colour Schemes — Reference Gallery (Values Only)</title>
+    <link rel="canonical" href="https://tol-palettes.kidthales.com/" />
+    <meta name="description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
+    <meta property="og:title" content="Paul Tol Colour Schemes — Reference Gallery" />
+    <meta property="og:description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
+    <meta property="og:url" content="https://tol-palettes.kidthales.com/" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Paul Tol Colour Schemes — Reference Gallery" />
+    <meta name="twitter:description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
     <style>
 /* banded-12 (sequential) */
 :root {
@@ -749,6 +758,13 @@
       }
       :root[data-theme='light'] { color-scheme: light; }
       :root[data-theme='dark'] { color-scheme: dark; }
+      :root[data-canvas='light'] .swatch-chip { background-image: linear-gradient(to right, #ffffff, #ffffff); }
+      :root[data-canvas='neutral'] .swatch-chip { background-image: linear-gradient(to right, #888888, #888888); }
+      :root[data-canvas='dark'] .swatch-chip { background-image: linear-gradient(to right, #111111, #111111); }
+      .header-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+      .canvas-controls { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.8125rem; font-family: ui-monospace, monospace; }
+      .canvas-btn { font-family: inherit; font-size: 0.75rem; padding: 0.2rem 0.5rem; border: 1px solid var(--border); border-radius: 0.25rem; background: var(--surface); color: var(--fg); cursor: pointer; }
+      .canvas-btn[aria-pressed='true'] { border-color: var(--focus); font-weight: 700; background: var(--border); }
       *, *::before, *::after { box-sizing: border-box; }
       body {
         margin: 0;
@@ -903,9 +919,18 @@
           <h1>Paul Tol Colour Schemes — Reference Gallery</h1>
           <p>22 schemes · Colour values only, with attribution · Click or press Enter on any hex code to copy.</p>
         </div>
-        <button type="button" class="theme-btn" id="themeToggle" aria-label="Toggle colour theme">
-          [ Toggle theme ]
-        </button>
+        <div class="header-controls">
+          <div class="canvas-controls" role="group" aria-label="Swatch canvas background">
+            <span>Canvas:</span>
+            <button type="button" class="canvas-btn" data-canvas-set="default" aria-pressed="true">Auto</button>
+            <button type="button" class="canvas-btn" data-canvas-set="light" aria-pressed="false">Light</button>
+            <button type="button" class="canvas-btn" data-canvas-set="neutral" aria-pressed="false">Neutral</button>
+            <button type="button" class="canvas-btn" data-canvas-set="dark" aria-pressed="false">Dark</button>
+          </div>
+          <button type="button" class="theme-btn" id="themeToggle" aria-label="Toggle colour theme">
+            [ Toggle theme ]
+          </button>
+        </div>
       </div>
       <nav class="jump-nav" aria-label="Scheme navigation">
         <ul>
@@ -5985,6 +6010,19 @@
         const rootEl = document.documentElement;
         const toggleBtn = document.getElementById('themeToggle');
         const statusEl = document.getElementById('copyStatus');
+        document.querySelectorAll('[data-canvas-set]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const mode = btn.getAttribute('data-canvas-set');
+            if (mode === 'default') {
+              delete rootEl.dataset.canvas;
+            } else {
+              rootEl.dataset.canvas = mode;
+            }
+            document.querySelectorAll('[data-canvas-set]').forEach((b) => {
+              b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+            });
+          });
+        });
         toggleBtn?.addEventListener('click', () => {
           const isDark =
             rootEl.dataset.theme === 'dark' ||

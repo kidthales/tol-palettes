@@ -1,15 +1,19 @@
 // Generates game and pixel-art palette outputs from data/schemes/*.json:
-//   dist/gpl/<id>.gpl          GIMP / Aseprite / Inkscape / Krita palette files
-//   dist/aseprite/<id>.gpl     Aseprite palette files (with Aseprite header comments)
-//   dist/godot/tol_palettes.gd GDScript 2.0 (Godot 4.x) constants & helper class
-//   dist/godot/<id>.tres       Godot 4.x ColorPalette resources for the editor ColorPicker
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+//   dist/gpl/<id>.gpl                          GIMP / Inkscape / Krita palette files
+//   dist/aseprite/<id>.gpl                     Aseprite palette files (with Aseprite header comments)
+//   dist/godot/tol_palettes.gd                 GDScript 2.0 (Godot 4.x) constants & helper class
+//   dist/godot/<id>.tres                       Godot 4.x ColorPalette resources for the editor ColorPicker
+//   dist/godot/addons/tol_palettes/plugin.cfg  Godot 4.x addon manifest
+//   dist/godot/addons/tol_palettes/*.tres      Addon ColorPalette resources
+//   dist/godot/addons/tol_palettes/*.gd        Addon scripts
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 export const COMMENT_LINES = [
   "Colour values from Paul Tol's colour schemes (https://sronpersonalpages.nl/~pault/),",
@@ -60,6 +64,20 @@ export function godotTresFor(scheme) {
   const floats = all.map((c) => hexToFloatTriplet(c.hex)).join(', ');
   const comments = COMMENT_LINES.map((l) => `; ${l}`).join('\n');
   return `[gd_resource type="ColorPalette" format=3]\n\n${comments}\n; Scheme: ${scheme.id} (${scheme.kind})\n\n[resource]\ncolors = PackedColorArray(${floats})\n`;
+}
+
+export function generateGodotPluginCfg(version = pkg.version) {
+  const comments = COMMENT_LINES.map((l) => `; ${l}`).join('\n');
+  return `[plugin]
+
+${comments}
+
+name="Paul Tol Colour Palettes"
+description="Colour-blind safe colour schemes by Paul Tol formatted as Godot 4.x ColorPalette resources and GDScript lookup helper."
+author="kidthales (data by Paul Tol)"
+version="${version}"
+script=""
+`;
 }
 
 export function generateGodotScript(schemes = loadSchemes().map((x) => x.data)) {
@@ -189,17 +207,24 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const gplDir = join(root, 'dist', 'gpl');
   const aseDir = join(root, 'dist', 'aseprite');
   const godotDir = join(root, 'dist', 'godot');
+  const addonDir = join(godotDir, 'addons', 'tol_palettes');
 
-  for (const dir of [gplDir, aseDir, godotDir]) {
+  for (const dir of [gplDir, aseDir, godotDir, addonDir]) {
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(dir, { recursive: true });
   }
 
   for (const [name, text] of gplFiles) writeFileSync(join(gplDir, name), text);
   for (const [name, text] of aseFiles) writeFileSync(join(aseDir, name), text);
-  for (const [name, text] of godotFiles) writeFileSync(join(godotDir, name), text);
+  for (const [name, text] of godotFiles) {
+    writeFileSync(join(godotDir, name), text);
+    writeFileSync(join(addonDir, name), text);
+  }
+
+  // Also write plugin.cfg into the addon directory
+  writeFileSync(join(addonDir, 'plugin.cfg'), generateGodotPluginCfg());
 
   console.log(
-    `Wrote ${gplFiles.size} files to dist/gpl, ${aseFiles.size} to dist/aseprite and ${godotFiles.size} to dist/godot.`,
+    `Wrote ${gplFiles.size} files to dist/gpl, ${aseFiles.size} to dist/aseprite, ${godotFiles.size} to dist/godot, and addon under dist/godot/addons/tol_palettes.`,
   );
 }
