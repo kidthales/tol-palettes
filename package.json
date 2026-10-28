@@ -3,7 +3,8 @@
   "version": "0.1.1",
   "description": "Paul Tol colour scheme data (values only, with attribution) and generators for CSS, JS/TS, Python, Godot, and GPL/Aseprite.",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "license": "BSD-3-Clause",
   "author": "kidthales",

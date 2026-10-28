@@ -5,18 +5,78 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
-
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish to GitHub Packages
+  verify:
+    name: Verify & Test
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate & test build
+        run: |
+          npm run lint
+          npm run validate
+          npm test
+
+      - name: Dry-run packaging
+        run: npm pack --dry-run
+
+  publish-npm:
+    name: Publish to npm Public Registry
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish to npm (Idempotent with Provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VER=$(node -p "require('./package.json').version")
+          echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on npm public registry..."
+          if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on npm. Skipping publish step."
+          else
+            npm publish --provenance --access public
+            echo "Successfully published ${PKG_NAME}@${PKG_VER} to npm."
+          fi
+
+  publish-gpr:
+    name: Publish to GitHub Packages
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -31,12 +91,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate & test build
-        run: |
-          npm run lint
-          npm run validate
-          npm test
-
       - name: Publish to GitHub Packages (Idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -44,9 +98,9 @@ jobs:
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on GitHub Packages..."
-          if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+          if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://npm.pkg.github.com/ >/dev/null 2>&1; then
             echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on GitHub Packages. Skipping publish step."
           else
-            npm publish
+            npm publish --registry=https://npm.pkg.github.com/
             echo "Successfully published ${PKG_NAME}@${PKG_VER} to GitHub Packages."
           fi
