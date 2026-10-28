@@ -53,6 +53,9 @@ for (const sub of distCheckDirs) {
     errors.push(`[dist] dist/${sub} is empty.`);
   }
   for (const f of files) {
+    if (sub === 'gallery' && f === 'CNAME') {
+      continue;
+    }
     const content = readFileSync(join(subPath, f), 'utf8');
     if (!content.includes('Paul Tol') || !content.includes('not affiliated with or endorsed by Paul Tol')) {
       errors.push(`[attribution] dist/${sub}/${f} is missing the mandatory Paul Tol attribution header.`);

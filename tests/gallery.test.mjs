@@ -17,10 +17,21 @@ test('dist/gallery/index.html is deterministic, attributed and has no external d
   assert.match(html, /NOTICE/);
   assert.match(html, /not affiliated with or endorsed by Paul Tol/);
 
-  // No external <link>, <script src>, or <img src>
-  assert.doesNotMatch(html, /<link\b[^>]*href=/i);
+  // Canonical URL & OpenGraph / Twitter metadata
+  assert.match(html, /<link rel="canonical" href="https:\/\/tol-palettes\.kidthales\.com\/" \/>/);
+  assert.match(html, /<meta property="og:url" content="https:\/\/tol-palettes\.kidthales\.com\/" \/>/);
+  assert.match(html, /<meta name="twitter:card" content="summary" \/>/);
+
+  // No external stylesheets, scripts, or images
+  assert.doesNotMatch(html, /<link\b[^>]*rel="stylesheet"/i);
   assert.doesNotMatch(html, /<script\b[^>]*src=/i);
   assert.doesNotMatch(html, /<img\b[^>]*src=/i);
+});
+
+test('dist/gallery/CNAME exists and contains custom domain', () => {
+  const cnamePath = join(root, 'dist', 'gallery', 'CNAME');
+  const cname = readFileSync(cnamePath, 'utf8');
+  assert.equal(cname, 'tol-palettes.kidthales.com\n');
 });
 
 test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios and keyboard controls', () => {
@@ -28,6 +39,9 @@ test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios 
 
   // Accessible theme toggle and aria-live copy status region
   assert.match(html, /id="themeToggle"/);
+  assert.match(html, /data-canvas-set="light"/);
+  assert.match(html, /data-canvas-set="neutral"/);
+  assert.match(html, /data-canvas-set="dark"/);
   assert.match(html, /role="status"\s+aria-live="polite"/);
 
   // Single-quote XSS escaping
