@@ -28,3 +28,18 @@ Example:
 Semantic tokens such as `--color-primary` are deliberately not defined here; they belong to the consuming site.
 
 Every file starts with an attribution header; see `NOTICE`.
+
+## CDN Usage
+
+When published to npm, all CSS files are available via jsDelivr and unpkg:
+
+```html
+<!-- Monolithic bundle with all 22 schemes (jsDelivr) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes/dist/css/tol.css">
+
+<!-- Individual scheme (e.g. bright palette via unpkg) -->
+<link rel="stylesheet" href="https://unpkg.com/@kidthales/tol-palettes/dist/css/bright.css">
+
+<!-- Pinned version -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.1/dist/css/tol.css">
+```

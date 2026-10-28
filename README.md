@@ -23,16 +23,53 @@ Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronp
 
 ### Installation
 
-Install `@kidthales/tol-palettes` from GitHub Packages. Add the `@kidthales` scope to your project `.npmrc`:
+#### npm (Public Registry — Zero Config)
+
+Install directly from the npm public registry:
+
+```bash
+npm install @kidthales/tol-palettes
+```
+
+#### GitHub Packages (Alternative)
+
+To install from GitHub Packages instead, configure the scope in your `.npmrc`:
 
 ```ini
 @kidthales:registry=https://npm.pkg.github.com
 ```
 
-Then install via npm:
+Then install:
 
 ```bash
 npm install @kidthales/tol-palettes
+```
+
+#### CDN Delivery (jsDelivr / unpkg)
+
+You can load CSS stylesheets, JavaScript modules, or JSON data directly in the browser via CDN without a build step:
+
+**CSS Stylesheets:**
+```html
+<!-- Full 22-scheme bundle (jsDelivr) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes/dist/css/tol.css">
+
+<!-- Individual scheme (e.g. bright palette via unpkg) -->
+<link rel="stylesheet" href="https://unpkg.com/@kidthales/tol-palettes/dist/css/bright.css">
+```
+
+**JavaScript / ESM:**
+```html
+<script type="module">
+  import { bright, interpolate } from "https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes/+esm";
+  console.log(bright.colors);
+</script>
+```
+
+**Raw JSON Data:**
+```text
+https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes/dist/json/schemes.json
+https://unpkg.com/@kidthales/tol-palettes/dist/json/schemes.json
 ```
 
 > [!NOTE]
