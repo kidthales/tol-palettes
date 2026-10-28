@@ -5,6 +5,31 @@ All notable changes to `@kidthales/tol-palettes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-28
+
+For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_2_0.md`](docs/RELEASE_NOTES_V0_2_0.md).
+
+### Added
+- **Multi-Ecosystem Distribution & Packaging**:
+  - Published to npm public registry (`@kidthales/tol-palettes`) with dual-publishing support for GitHub Packages.
+  - Python distribution (`tol-palettes`) on PyPI via Hatchling and GitHub Actions OIDC Trusted Publishing (`id-token: write`).
+  - Turnkey Godot 4.x addon in `dist/godot/addons/tol_palettes/` with `plugin.cfg` registering version `0.2.0`.
+  - Automated release assets bundling (`tol-palettes-godot-v0.2.0.zip`, `tol-palettes-gpl-v0.2.0.zip`, `tol-palettes-aseprite-v0.2.0.zip`, and `tol-palettes-json-v0.2.0.zip`).
+- **GitHub Pages & Documentation**:
+  - Live documentation and swatch gallery deployed to [tol-palettes.kidthales.com](https://tol-palettes.kidthales.com) via GitHub Actions Pages workflow.
+  - Ecosystem documentation guides in `docs/` (CSS, JS/TS, Python, Godot, GPL/Aseprite).
+  - Open source governance files: `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, and issue/PR templates.
+- **Local CI & Developer Tooling**:
+  - Introduced `scripts/ci-local.ps1` automating all 4 local quality gates (linting, schema validation, test runner, build artifact checks).
+
+### Changed
+- Bumped project version to `0.2.0` across `package.json`, `package-lock.json`, and `pyproject.toml`.
+- Pinned CDN references in `docs/css.md` to `0.2.0`.
+- Added npm and PyPI version badges to `README.md`.
+
+### Fixed
+- Fixed gallery color masking and contrast compliance across interactive preview buttons and swatch elements.
+
 ## [0.1.1] - 2026-10-18
 
 ### Documentation & Tooling
