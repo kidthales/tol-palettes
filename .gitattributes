@@ -1,3 +1,6 @@
 * text=auto
 dist/** text eol=lf
+dist/assets/*.zip binary
 data/** text eol=lf
+*.whl binary
+*.gz binary

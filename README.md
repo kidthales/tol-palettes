@@ -120,9 +120,10 @@ bright = tol_cset("bright")
 cmap = tol_cmap("sunset")  # Returns matplotlib colormap when matplotlib is installed
 ```
 
-### Godot 4.x & Pixel Art (`dist/godot/`, `dist/aseprite/`, `dist/gpl/`)
-- Load `dist/godot/<scheme>.tres` directly as a Godot `ColorPalette` resource in the editor color picker, or call `TolPalettes` constants from `dist/godot/tol_palettes.gd`.
-- Load `dist/aseprite/<scheme>.gpl` or `dist/gpl/<scheme>.gpl` in Aseprite, GIMP, Inkscape, or Krita.
+### Godot 4.x & Pixel Art (`dist/godot/`, `dist/aseprite/`, `dist/gpl/`, `dist/assets/`)
+- **Godot 4.x Addon**: Extract `dist/assets/tol-palettes-godot.zip` into your project root to install `addons/tol_palettes/` with `plugin.cfg`, `tol_palettes.gd` (`TolPalettes`), and 22 `ColorPalette` `.tres` resources. See [`docs/game.md`](docs/game.md).
+- **Aseprite & GPL Bundles**: Download `dist/assets/tol-palettes-aseprite.zip` or `tol-palettes-gpl.zip` for instant drag-and-drop palette loading in Aseprite, GIMP, Inkscape, or Krita.
+- Download zip bundles directly from the [latest GitHub Release](https://github.com/kidthales/tol-palettes/releases).
 
 ---
 
@@ -135,6 +136,7 @@ cmap = tol_cmap("sunset")  # Returns matplotlib colormap when matplotlib is inst
 | `dist/js/` & `dist/json/` | `npm run generate:js` | Tree-shakeable ESM module (`index.js` + `index.d.ts`) and flat `schemes.json` — see [`docs/js.md`](docs/js.md) |
 | `dist/py/` | `npm run generate:py` | Python module (`tol_palettes.py`) with optional `matplotlib` support — see [`docs/python.md`](docs/python.md) |
 | `dist/gpl/`, `dist/aseprite/`, `dist/godot/` | `npm run generate:game` | GIMP/Aseprite `.gpl` palettes, Godot 4.x `tol_palettes.gd` and `ColorPalette` `.tres` resources — see [`docs/game.md`](docs/game.md) |
+| `dist/assets/` | `npm run package:assets` | Downloadable `.zip` archives for Godot (`tol-palettes-godot.zip`), Aseprite, and GPL |
 | `dist/gallery/` | `npm run generate:gallery` | Self-contained offline HTML reference gallery (`index.html`) with copyable hex codes and WCAG contrast ratios |
 
 ---

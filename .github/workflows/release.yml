@@ -135,3 +135,37 @@ jobs:
         with:
           packages-dir: dist_pypi/
 
+  attach-assets:
+    name: Attach Release Asset Bundles
+    needs: verify
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate game assets and package zip bundles
+        run: |
+          npm run generate:game
+          npm run package:assets
+
+      - name: Upload zip bundles to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/assets/tol-palettes-godot.zip \
+            dist/assets/tol-palettes-aseprite.zip \
+            dist/assets/tol-palettes-gpl.zip \
+            --clobber
