@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and Paul Tol's underlying technical note."
+title: "tol-palettes"
+abstract: "Paul Tol colour scheme data (values only, with attribution) and multi-environment generators for CSS, JavaScript/TypeScript, Python, Godot 4.x, and GIMP/Aseprite."
+type: software
+authors:
+  - name: "kidthales"
+repository-code: "https://github.com/kidthales/tol-palettes"
+url: "https://tol-palettes.kidthales.com"
+license: "BSD-3-Clause"
+keywords:
+  - "paul-tol"
+  - "color-schemes"
+  - "colorblind-safe"
+  - "palettes"
+  - "dataviz"
+  - "accessible"
+  - "wcag"
+references:
+  - type: report
+    authors:
+      - family-names: "Tol"
+        given-names: "Paul"
+    title: "Colour Schemes"
+    institution:
+      name: "SRON Netherlands Institute for Space Research"
+    number: "SRON/EPS/TN/09-002"
+    year: 2021
+    url: "https://sronpersonalpages.nl/~pault/data/colourschemes.pdf"
+    notes: "Technical report issue 3.2"

@@ -4,6 +4,8 @@
 [![Pages](https://github.com/kidthales/tol-palettes/actions/workflows/pages.yml/badge.svg)](https://tol-palettes.kidthales.com)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
+[![DOI](https://img.shields.io/badge/citation-CITATION.cff-informational.svg)](CITATION.cff)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
 Colour scheme data inspired by and sourced from [Paul Tol's notes](https://sronpersonalpages.nl/~pault/), with multi-environment generators for **CSS**, **JavaScript / TypeScript**, **Python (`matplotlib`)**, **Godot 4.x**, and **GIMP / Aseprite**.
 
@@ -148,6 +150,26 @@ npm run lint       # Validate schemas, JS syntax, attribution headers, and expor
 npm run validate   # Validate all 22 scheme JSON files against schema + invariants
 npm run generate   # Regenerate all outputs in dist/
 npm test           # Run full linter, schema, CSS, JS/TS, Python, Game/Godot/GPL, Gallery, and packaging test suite
+```
+
+---
+
+## Community & Citation
+
+- **Code of Conduct**: This project is governed by the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md). Please report issues or violations to `admin@agogpixel.com`.
+- **Contributing**: Please review [CONTRIBUTING.md](CONTRIBUTING.md) for local development workflows and code generation rules.
+- **Academic Citation**: If you use `tol-palettes` or Paul Tol's colour schemes in academic publications, research software, or educational material, please cite this project via [`CITATION.cff`](CITATION.cff) and Paul Tol's technical report:
+
+```bibtex
+@techreport{tol2021colourschemes,
+  author      = {Paul Tol},
+  title       = {Colour Schemes},
+  institution = {SRON Netherlands Institute for Space Research},
+  year        = {2021},
+  number      = {SRON/EPS/TN/09-002},
+  type        = {Technical report issue 3.2},
+  url         = {https://sronpersonalpages.nl/~pault/data/colourschemes.pdf}
+}
 ```
 
 ---
