@@ -1,6 +1,7 @@
 # @kidthales/tol-palettes
 
 [![CI](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml/badge.svg)](https://github.com/kidthales/tol-palettes/actions/workflows/ci.yml)
+[![Pages](https://github.com/kidthales/tol-palettes/actions/workflows/pages.yml/badge.svg)](https://tol-palettes.kidthales.com)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
 
