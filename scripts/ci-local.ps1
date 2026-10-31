@@ -464,6 +464,26 @@ try {
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
+        if ($CI) {
+            # Ensure npm dependencies are installed on clean runner
+            if (-not (Test-Path (Join-Path $RootDir "node_modules"))) {
+                Write-Host "  -> Installing npm dependencies (npm ci)..." -ForegroundColor DarkGray
+                & npm ci
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Gate 2 Failed: npm ci failed."
+                }
+            }
+            # Ensure python build dependency is available
+            & python -c "import build" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  -> Installing Python build dependencies..." -ForegroundColor DarkGray
+                & python -m pip install --quiet --upgrade pip build
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Gate 2 Failed: Python build dependency installation failed."
+                }
+            }
+        }
+
         # PowerShell AST parse validation for scripts
         $Ps1Files = Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules)[\\/]' }
         $ParseErrors = 0
@@ -507,26 +527,6 @@ try {
     Enter-CiGate "[3/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
-
-        if ($CI) {
-            # Ensure npm dependencies are installed on clean runner
-            if (-not (Test-Path (Join-Path $RootDir "node_modules"))) {
-                Write-Host "  -> Installing npm dependencies (npm ci)..." -ForegroundColor DarkGray
-                & npm ci
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Gate 3 Failed: npm ci failed."
-                }
-            }
-            # Ensure python build dependency is available
-            & python -c "import build" 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "  -> Installing Python build dependencies..." -ForegroundColor DarkGray
-                & python -m pip install --quiet --upgrade pip build
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Gate 3 Failed: Python build dependency installation failed."
-                }
-            }
-        }
 
         Write-Host "  -> Running npm test..." -ForegroundColor DarkGray
         & npm test
