@@ -473,11 +473,11 @@ try {
                     throw "Gate 2 Failed: npm ci failed."
                 }
             }
-            # Ensure python build dependency is available
-            & python -c "import build" 2>$null
+            # Ensure python build dependencies are available
+            & python -c "import build, hatchling" 2>$null
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "  -> Installing Python build dependencies..." -ForegroundColor DarkGray
-                & python -m pip install --quiet --upgrade pip build
+                Write-Host "  -> Installing Python build dependencies (build, hatchling)..." -ForegroundColor DarkGray
+                & python -m pip install --quiet --upgrade pip build hatchling
                 if ($LASTEXITCODE -ne 0) {
                     throw "Gate 2 Failed: Python build dependency installation failed."
                 }
