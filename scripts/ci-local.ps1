@@ -354,16 +354,11 @@ Write-Host " Root: $RootDir" -ForegroundColor Gray
 Write-Host "====================================================" -ForegroundColor Cyan
 
 $GateResults = [ordered]@{
-    "gate0_workflow_contract" = "not-applicable"
-    "gate1_action_pins"       = "not-applicable"
-    "gate2_go_vet"            = "not-applicable"
-    "gate3_unit_coverage"     = "not-applicable"
-    "gate4_govulncheck"       = "not-applicable"
-    "gate5_race_detector"     = "not-applicable"
-    "gate6_pwsh_ast"          = "not-applicable"
-    "gate7_knowledge_budget"  = "not-applicable"
-    "gate8_secret_leaks"      = "not-applicable"
-    "gate9_cross_compile"     = "not-applicable"
+    "gate0_workflow_contract"     = "not-applicable"
+    "gate1_action_pins_and_leaks" = "not-applicable"
+    "gate2_pwsh_ast_and_lint"     = "not-applicable"
+    "gate3_test_and_pack"         = "not-applicable"
+    "gate4_dist_drift"            = "not-applicable"
 }
 
 $ActiveFlags = @()
@@ -450,8 +445,7 @@ try {
             throw "Gate 1 Failed: Agent or scratch files must not exist or be tracked in the repository."
         }
 
-        $GateResults["gate1_action_pins"] = "pass"
-        $GateResults["gate8_secret_leaks"] = "pass"
+        $GateResults["gate1_action_pins_and_leaks"] = "pass"
         Write-Pass "Action commit SHA pins and agent leak audits passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -514,8 +508,7 @@ try {
             throw "Gate 2 Failed: Schema validation failed."
         }
 
-        $GateResults["gate6_pwsh_ast"] = "pass"
-        $GateResults["gate2_go_vet"] = "pass"
+        $GateResults["gate2_pwsh_ast_and_lint"] = "pass"
         Write-Pass "PowerShell AST, linter, and schema validations passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -573,7 +566,7 @@ try {
             }
         }
 
-        $GateResults["gate3_unit_coverage"] = "pass"
+        $GateResults["gate3_test_and_pack"] = "pass"
         Write-Pass "Test suite and packaging dry-run passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -603,20 +596,15 @@ try {
                 throw "Gate 4 Failed: Generated distribution drift detected."
             }
 
-            $GateResults["gate4_govulncheck"] = "pass"
+            $GateResults["gate4_dist_drift"] = "pass"
             Write-Pass "Generated outputs are up to date and clean." $StepTimer
         } else {
-            $GateResults["gate4_govulncheck"] = "pass"
+            $GateResults["gate4_dist_drift"] = "not-applicable"
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
     } finally {
         Exit-CiGate
     }
-
-    # Map remaining non-applicable canonical gates for receipt completeness
-    $GateResults["gate5_race_detector"]    = "pass"
-    $GateResults["gate7_knowledge_budget"] = "pass"
-    $GateResults["gate9_cross_compile"]    = "pass"
 
     # -------------------------------------------------------------
     # Write Local CI Receipt (.ci-local/receipt.json + history.jsonl)

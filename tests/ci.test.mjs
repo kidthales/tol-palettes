@@ -129,3 +129,44 @@ test('all third-party actions across all workflow files are pinned to 40-charact
     }
   }
 });
+
+test('ci-local.ps1 defines native tol-palettes gates and excludes leaked Go gate names', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+
+  const expectedGates = [
+    'gate0_workflow_contract',
+    'gate1_action_pins_and_leaks',
+    'gate2_pwsh_ast_and_lint',
+    'gate3_test_and_pack',
+    'gate4_dist_drift',
+  ];
+  for (const gate of expectedGates) {
+    assert.ok(content.includes(`"${gate}"`), `Expected native gate "${gate}" to be declared in ci-local.ps1`);
+  }
+
+  const leakedGates = [
+    'gate2_go_vet',
+    'gate4_govulncheck',
+    'gate5_race_detector',
+    'gate6_pwsh_ast',
+    'gate7_knowledge_budget',
+    'gate8_secret_leaks',
+    'gate9_cross_compile',
+  ];
+  for (const leaked of leakedGates) {
+    assert.ok(!content.includes(leaked), `Leaked Go gate "${leaked}" must not exist in ci-local.ps1`);
+  }
+});
+
+test('ci-local.ps1 records gate4_dist_drift as not-applicable when -Quick or -SkipGenerate is used', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+  assert.ok(
+    content.includes('$GateResults["gate4_dist_drift"] = "not-applicable"'),
+    'Expected gate4_dist_drift to be recorded as not-applicable during skip/quick runs',
+  );
+  assert.ok(
+    content.includes('$GateResults["gate4_dist_drift"] = "pass"'),
+    'Expected gate4_dist_drift to be recorded as pass during full verification runs',
+  );
+});
+
