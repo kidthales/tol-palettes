@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { resolveOutDir } from './path-jail.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -202,11 +203,12 @@ export function generateAllGame(schemes = loadSchemes().map((x) => x.data)) {
   return { gplFiles, aseFiles, godotFiles };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+export function generateGame(opts = {}) {
+  const targetDist = resolveOutDir(opts);
   const { gplFiles, aseFiles, godotFiles } = generateAllGame();
-  const gplDir = join(root, 'dist', 'gpl');
-  const aseDir = join(root, 'dist', 'aseprite');
-  const godotDir = join(root, 'dist', 'godot');
+  const gplDir = join(targetDist, 'gpl');
+  const aseDir = join(targetDist, 'aseprite');
+  const godotDir = join(targetDist, 'godot');
   const addonDir = join(godotDir, 'addons', 'tol_palettes');
 
   for (const dir of [gplDir, aseDir, godotDir, addonDir]) {
@@ -223,8 +225,25 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 
   // Also write plugin.cfg into the addon directory
   writeFileSync(join(addonDir, 'plugin.cfg'), generateGodotPluginCfg());
+  return { gplDir, aseDir, godotDir, addonDir };
+}
 
+function parseCliOutDir(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
+    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
+  }
+  return undefined;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  const res = generateGame(opts);
   console.log(
-    `Wrote ${gplFiles.size} files to dist/gpl, ${aseFiles.size} to dist/aseprite, ${godotFiles.size} to dist/godot, and addon under dist/godot/addons/tol_palettes.`,
+    `Wrote game palettes under ${res.godotDir} (gpl, aseprite, godot).`
   );
 }

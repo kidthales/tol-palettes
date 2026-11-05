@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { resolveOutDir } from './path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -310,10 +311,11 @@ export declare function discreteColors(schemeOrId: Scheme | SchemeId | string, n
 `;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+export function generateJs(opts = {}) {
+  const targetDist = resolveOutDir(opts);
   const schemes = loadSchemes().map((x) => x.data);
-  const jsonDir = join(root, 'dist', 'json');
-  const jsDir = join(root, 'dist', 'js');
+  const jsonDir = join(targetDist, 'json');
+  const jsDir = join(targetDist, 'js');
   rmSync(jsonDir, { recursive: true, force: true });
   rmSync(jsDir, { recursive: true, force: true });
   mkdirSync(jsonDir, { recursive: true });
@@ -322,5 +324,23 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   writeFileSync(join(jsonDir, 'schemes.json'), generateJsonBundle(schemes));
   writeFileSync(join(jsDir, 'index.js'), generateJsModule(schemes));
   writeFileSync(join(jsDir, 'index.d.ts'), generateDts(schemes));
+  return { jsonDir, jsDir };
+}
+
+function parseCliOutDir(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
+    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
+  }
+  return undefined;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  generateJs(opts);
   console.log('Wrote dist/json/schemes.json, dist/js/index.js and dist/js/index.d.ts.');
 }

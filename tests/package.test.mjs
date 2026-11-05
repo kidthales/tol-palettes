@@ -23,6 +23,7 @@ test('npm pack --dry-run enforces size budgets and excludes dev/CI files', () =>
   assert.ok(paths.includes('dist/js/index.js'), 'dist/js/index.js must be included');
   assert.ok(paths.includes('dist/js/index.d.ts'), 'dist/js/index.d.ts must be included');
   assert.ok(paths.includes('dist/css/tol.css'), 'dist/css/tol.css must be included');
+  assert.ok(paths.includes('dist/sri.json'), 'dist/sri.json must be included');
   assert.ok(paths.includes('dist/py/tol_palettes.py'), 'dist/py/tol_palettes.py must be included');
 
   for (const p of paths) {
@@ -48,6 +49,13 @@ test('all package.json exports resolve to existing files or directories', () => 
       assert.ok(existsSync(join(root, checkPath)), `Export ${subpath} -> ${t} missing on disk`);
     }
   }
+});
+
+test('package.json exports ./sri pointing to dist/sri.json', () => {
+  assert.equal(pkg.exports['./sri'], './dist/sri.json');
+  const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
+  assert.equal(sri.package, pkg.name);
+  assert.equal(sri.version, pkg.version);
 });
 
 test('external ESM consumer import and TypeScript declaration integrity', async () => {

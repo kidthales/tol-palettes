@@ -10,11 +10,10 @@
 //   --tol-<id>-discrete-<k>      discrete variant when it differs (discreteIndexes)
 //   --tol-<id>-n<N>-<k>          discrete rainbow lookup: N requested colours, k-th colour
 import { mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { resolveOutDir } from './path-jail.mjs';
 
 const HEADER = `/*
  * Colour values from Paul Tol's colour schemes (https://sronpersonalpages.nl/~pault/),
@@ -55,11 +54,30 @@ export function generateAll(schemes = loadSchemes().map((x) => x.data)) {
   return files;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const dir = join(root, 'dist', 'css');
+export function generateCss(opts = {}) {
+  const targetDist = resolveOutDir(opts);
+  const dir = join(targetDist, 'css');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const files = generateAll();
   for (const [name, text] of files) writeFileSync(join(dir, name), text);
-  console.log(`Wrote ${files.size} files to dist/css (${readdirSync(dir).length} entries).`);
+  return { dir, count: files.size };
+}
+
+function parseCliOutDir(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
+    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
+  }
+  return undefined;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  const res = generateCss(opts);
+  console.log(`Wrote ${res.count} files to ${res.dir} (${readdirSync(res.dir).length} entries).`);
 }

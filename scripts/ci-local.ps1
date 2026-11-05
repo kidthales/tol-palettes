@@ -6,11 +6,11 @@
     0. Gate 0: Workflow verify-job single-source contract (ci-local.ps1 -CI + exact job-id/step-name allowlist)
     1. Gate 1: Workflow action commit SHA pin verification, agent leak & secret audit
     2. Gate 2: PowerShell AST validation, linter & schema validation (npm run lint, npm run validate)
-    3. Gate 3: Test suite & packaging dry-run (npm test, npm pack --dry-run, python -m build)
-    4. Gate 4: Generated distribution drift audit (npm run generate -> git status dist)
+    3. Gate 3: Generated distribution drift audit (npm run generate -> git status dist data schema docs README.md)
+    4. Gate 4: Test suite & packaging dry-run (npm test, side-effect guard, npm pack --dry-run, python -m build)
 .PARAMETER CI
-    Enforces strict fail-closed contract for CI runners: rejects skip/quick flags,
-    fails hard on missing tools, and emits GitHub Actions log groups.
+    Enforces strict fail-closed contract for CI runners (auto-enabled when $env:GITHUB_ACTIONS is set):
+    rejects skip/quick flags, fails hard on missing tools, and emits GitHub Actions log groups.
 .PARAMETER Quick
     Runs lint, validate, and tests only; skips distribution regeneration drift check.
 .PARAMETER SkipGenerate
@@ -38,6 +38,12 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 
 $TotalTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
+# Auto-enable $CI when running under GitHub Actions
+$IsCI = $CI.IsPresent -or (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTIONS))
+if ($IsCI -and -not $CI) {
+    $CI = [switch]::Present
+}
 
 function Enter-CiGate {
     param([string]$Title)
@@ -103,8 +109,8 @@ $GateResults = [ordered]@{
     "gate0_workflow_contract"     = "not-applicable"
     "gate1_action_pins_and_leaks" = "not-applicable"
     "gate2_pwsh_ast_and_lint"     = "not-applicable"
-    "gate3_test_and_pack"         = "not-applicable"
-    "gate4_dist_drift"            = "not-applicable"
+    "gate3_dist_drift"            = "not-applicable"
+    "gate4_test_and_pack"         = "not-applicable"
 }
 
 $ActiveFlags = @()
@@ -113,6 +119,18 @@ if ($SkipGenerate) { $ActiveFlags += "-SkipGenerate" }
 
 Push-Location $RootDir
 try {
+    # Upfront runtime and dependency assertions
+    $NodeVersionRaw = (& node -p "process.versions.node").Trim()
+    $NodeVersionCore = ($NodeVersionRaw -split '[-+]')[0]
+    if ([System.Version]$NodeVersionCore -lt [System.Version]"22.2.0") {
+        throw "Node.js >= 22.2.0 is required; found $NodeVersionRaw."
+    }
+
+    & python -c "import matplotlib" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python 'matplotlib' module is required but failed to import. Run 'pip install matplotlib'."
+    }
+
     # -------------------------------------------------------------
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
@@ -264,67 +282,9 @@ try {
     }
 
     # -------------------------------------------------------------
-    # Gate 3: Test Suite & Packaging Verification
+    # Gate 3: Generated Distribution Drift Audit
     # -------------------------------------------------------------
-    Enter-CiGate "[3/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
-    try {
-        $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
-
-        Write-Host "  -> Running npm test..." -ForegroundColor DarkGray
-        & npm test
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "npm test failed with exit code $LASTEXITCODE."
-            throw "Gate 3 Failed: Unit tests failed."
-        }
-
-        Write-Host "  -> Running npm pack --dry-run..." -ForegroundColor DarkGray
-        & npm pack --dry-run
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "npm pack --dry-run failed with exit code $LASTEXITCODE."
-            throw "Gate 3 Failed: Package packaging dry-run failed."
-        }
-
-        Write-Host "  -> Running Python packaging verification (python -m build, wheel import)..." -ForegroundColor DarkGray
-        $pyTmp = New-Item -ItemType Directory -Path "$([System.IO.Path]::GetTempPath())tol_py_build_$([System.Guid]::NewGuid().ToString('N'))"
-        try {
-            & python -m build --no-isolation --outdir $pyTmp.FullName
-            if ($LASTEXITCODE -ne 0) {
-                Write-Fail "python -m build failed with exit code $LASTEXITCODE."
-                throw "Gate 3 Failed: Python build failed."
-            }
-
-            $wheels = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.whl")
-            $sdists = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.tar.gz")
-            if ($wheels.Count -eq 0 -or $sdists.Count -eq 0) {
-                Write-Fail "Expected .whl and .tar.gz distributions in build output."
-                throw "Gate 3 Failed: Missing wheel or sdist distribution."
-            }
-
-            # Verify wheel top-level module structure and execution
-            $pyExtract = Join-Path $pyTmp.FullName "extracted"
-            Expand-Archive -Path $wheels[0].FullName -DestinationPath $pyExtract -Force
-            & python -c "import sys; sys.path.insert(0, sys.argv[1]); import tol_palettes; cset = tol_palettes.tol_cset('bright'); assert len(cset.blue) == 7" $pyExtract
-            if ($LASTEXITCODE -ne 0) {
-                Write-Fail "Wheel import or functional execution test failed."
-                throw "Gate 3 Failed: Python wheel import test failed."
-            }
-            Write-Host "     * Python sdist & wheel packaging verified successfully" -ForegroundColor Green
-        } finally {
-            if (Test-Path $pyTmp.FullName) {
-                Remove-Item -Recurse -Force $pyTmp.FullName
-            }
-        }
-
-        $GateResults["gate3_test_and_pack"] = "pass"
-        Write-Pass "Test suite and packaging dry-run passed." $StepTimer
-    } finally {
-        Exit-CiGate
-    }
-
-    # -------------------------------------------------------------
-    # Gate 4: Generated Distribution Drift Audit
-    # -------------------------------------------------------------
-    Enter-CiGate "[4/4] Verifying generated distribution outputs are up to date..."
+    Enter-CiGate "[3/4] Verifying generated distribution outputs are up to date..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -333,24 +293,93 @@ try {
             & npm run generate
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "npm run generate failed with exit code $LASTEXITCODE."
-                throw "Gate 4 Failed: Distribution generation failed."
+                throw "Gate 3 Failed: Distribution generation failed."
             }
 
-            $DistStatus = & git status --porcelain dist
+            $DriftPaths = @('dist', 'data', 'schema', 'docs', 'README.md')
+            $DistStatus = & git status --porcelain -- $DriftPaths
             if ($DistStatus) {
-                Write-Fail "dist/ differs from a fresh generation. Run 'npm run generate' and commit the result."
+                Write-Fail "Generated files ($($DriftPaths -join ', ')) differ from a fresh generation. Run 'npm run generate' and commit the result."
                 Write-Host "Drift details:" -ForegroundColor Red
-                & git status --porcelain dist
-                & git diff --stat dist
-                throw "Gate 4 Failed: Generated distribution drift detected."
+                & git status --porcelain -- $DriftPaths
+                & git diff --stat -- $DriftPaths
+                throw "Gate 3 Failed: Generated distribution drift detected."
             }
 
-            $GateResults["gate4_dist_drift"] = "pass"
+            $GateResults["gate3_dist_drift"] = "pass"
             Write-Pass "Generated outputs are up to date and clean." $StepTimer
         } else {
-            $GateResults["gate4_dist_drift"] = "not-applicable"
+            $GateResults["gate3_dist_drift"] = "not-applicable"
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
+    } finally {
+        Exit-CiGate
+    }
+
+    # -------------------------------------------------------------
+    # Gate 4: Composite Test Suite & Packaging Verification
+    # -------------------------------------------------------------
+    Enter-CiGate "[4/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
+    try {
+        $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $PreTestStatus = (& git status --porcelain | Out-String)
+        Write-Host "  -> Running npm test..." -ForegroundColor DarkGray
+        & npm test
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "npm test failed with exit code $LASTEXITCODE."
+            throw "Gate 4 Failed: Unit tests failed."
+        }
+
+        # Verify working tree remains 100% clean and side-effect-free after npm test
+        $PostTestStatus = (& git status --porcelain | Out-String)
+        if ($PostTestStatus -ne $PreTestStatus) {
+            Write-Fail "Working tree was mutated by 'npm test'. Tests must be strictly read-only and side-effect-free."
+            Write-Host "Dirty files produced by tests:" -ForegroundColor Red
+            & git status --porcelain
+            throw "Gate 4 Failed: Tests produced working tree side effects."
+        }
+
+        Write-Host "  -> Running npm pack --dry-run..." -ForegroundColor DarkGray
+        & npm pack --dry-run
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "npm pack --dry-run failed with exit code $LASTEXITCODE."
+            throw "Gate 4 Failed: Package packaging dry-run failed."
+        }
+
+        Write-Host "  -> Running Python packaging verification (python -m build, wheel import)..." -ForegroundColor DarkGray
+        $pyTmp = New-Item -ItemType Directory -Path "$([System.IO.Path]::GetTempPath())tol_py_build_$([System.Guid]::NewGuid().ToString('N'))"
+        try {
+            & python -m build --no-isolation --outdir $pyTmp.FullName
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "python -m build failed with exit code $LASTEXITCODE."
+                throw "Gate 4 Failed: Python build failed."
+            }
+
+            $wheels = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.whl")
+            $sdists = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.tar.gz")
+            if ($wheels.Count -eq 0 -or $sdists.Count -eq 0) {
+                Write-Fail "Expected .whl and .tar.gz distributions in build output."
+                throw "Gate 4 Failed: Missing wheel or sdist distribution."
+            }
+
+            # Verify wheel top-level module structure and execution
+            $pyExtract = Join-Path $pyTmp.FullName "extracted"
+            Expand-Archive -Path $wheels[0].FullName -DestinationPath $pyExtract -Force
+            & python -c "import sys; sys.path.insert(0, sys.argv[1]); import tol_palettes; cset = tol_palettes.tol_cset('bright'); assert len(cset.blue) == 7" $pyExtract
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "Wheel import or functional execution test failed."
+                throw "Gate 4 Failed: Python wheel import test failed."
+            }
+            Write-Host "     * Python sdist & wheel packaging verified successfully" -ForegroundColor Green
+        } finally {
+            if (Test-Path $pyTmp.FullName) {
+                Remove-Item -Recurse -Force $pyTmp.FullName
+            }
+        }
+
+        $GateResults["gate4_test_and_pack"] = "pass"
+        Write-Pass "Test suite and packaging dry-run passed." $StepTimer
     } finally {
         Exit-CiGate
     }

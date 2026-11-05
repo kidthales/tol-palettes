@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
+import { resolveOutDir, resolveRealPath, stripWin32DeviceNamespacePrefix, isSameOrSubpath, assertValidMtimeOption, assertSafeCustomSyncTarget } from '../tools/path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = join(root, 'scripts', 'ci-local.ps1');
@@ -143,8 +144,8 @@ test('ci-local.ps1 defines native tol-palettes gates and excludes leaked Go gate
     'gate0_workflow_contract',
     'gate1_action_pins_and_leaks',
     'gate2_pwsh_ast_and_lint',
-    'gate3_test_and_pack',
-    'gate4_dist_drift',
+    'gate3_dist_drift',
+    'gate4_test_and_pack',
   ];
   for (const gate of expectedGates) {
     assert.ok(content.includes(`"${gate}"`), `Expected native gate "${gate}" to be declared in ci-local.ps1`);
@@ -164,15 +165,24 @@ test('ci-local.ps1 defines native tol-palettes gates and excludes leaked Go gate
   }
 });
 
-test('ci-local.ps1 records gate4_dist_drift as not-applicable when -Quick or -SkipGenerate is used', () => {
+test('ci-local.ps1 records gate3_dist_drift as not-applicable when -Quick or -SkipGenerate is used', () => {
   const content = readFileSync(scriptPath, 'utf8');
   assert.ok(
-    content.includes('$GateResults["gate4_dist_drift"] = "not-applicable"'),
-    'Expected gate4_dist_drift to be recorded as not-applicable during skip/quick runs',
+    content.includes('$GateResults["gate3_dist_drift"] = "not-applicable"'),
+    'Expected gate3_dist_drift to be recorded as not-applicable during skip/quick runs',
   );
   assert.ok(
-    content.includes('$GateResults["gate4_dist_drift"] = "pass"'),
-    'Expected gate4_dist_drift to be recorded as pass during full verification runs',
+    content.includes('$GateResults["gate3_dist_drift"] = "pass"'),
+    'Expected gate3_dist_drift to be recorded as pass during full verification runs',
+  );
+});
+
+test('ci-local.ps1 auto-enables $CI when $env:GITHUB_ACTIONS is set', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+  assert.match(
+    content,
+    /\$IsCI\s*=\s*\$CI\.IsPresent\s+-or\s+\(-not\s+\[string\]::IsNullOrWhiteSpace\(\$env:GITHUB_ACTIONS\)\)/,
+    'Expected GITHUB_ACTIONS check for auto-enabling $CI',
   );
 });
 
@@ -506,4 +516,69 @@ jobs:
       assert.ok(res.violations.some((v) => v.includes("must set package-manager-cache: false")));
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests: tools/path-jail.mjs
+// ---------------------------------------------------------------------------
+
+test('path-jail: resolveOutDir enforces repository jail and rejects protected paths', () => {
+  assert.throws(() => resolveOutDir(null), /Invalid outDir/);
+  assert.throws(() => resolveOutDir({ outDir: '' }), /Invalid outDir/);
+  assert.throws(() => resolveOutDir({ outDir: '   ' }), /Invalid outDir/);
+  assert.throws(() => resolveOutDir({ outDir: null }), /Invalid outDir/);
+  assert.throws(() => resolveOutDir({ outDir: undefined }), /Invalid outDir/);
+  assert.throws(() => resolveOutDir({ outDir: root }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'data') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'schema') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'tools') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'tests') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, '..foo') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'dist..foo') }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: dirname(root) }), /refusing to write to protected path/);
+
+  // Allowed targets
+  const defaultDist = resolveOutDir();
+  assert.equal(defaultDist, join(root, 'dist'));
+  const tempTarget = join(tmpdir(), 'tol_test_dist');
+  assert.equal(resolveOutDir({ outDir: tempTarget }), resolveRealPath(tempTarget));
+});
+
+test('path-jail: assertValidMtimeOption accepts Date and rejects non-Date', () => {
+  assert.throws(() => assertValidMtimeOption(null), /Invalid options/);
+  assert.throws(() => assertValidMtimeOption({ mtime: null }), /Invalid mtime/);
+  assert.throws(() => assertValidMtimeOption({ mtime: undefined }), /Invalid mtime/);
+  assert.throws(() => assertValidMtimeOption({ mtime: 'garbage' }), /Invalid mtime/);
+  assert.throws(() => assertValidMtimeOption({ mtime: new Date('invalid') }), /Invalid mtime/);
+
+  const d = new Date('2026-01-01T00:00:00Z');
+  assert.equal(assertValidMtimeOption({ mtime: d }), d);
+  assert.equal(assertValidMtimeOption({}), undefined);
+});
+
+test('path-jail: stripWin32DeviceNamespacePrefix strips NT and DOS device prefixes', () => {
+  assert.equal(stripWin32DeviceNamespacePrefix('\\\\?\\C:\\repo\\src'), 'C:\\repo\\src');
+  assert.equal(stripWin32DeviceNamespacePrefix('\\??\\C:\\repo\\src'), 'C:\\repo\\src');
+  assert.equal(stripWin32DeviceNamespacePrefix('\\\\.\\C:\\repo\\src'), 'C:\\repo\\src');
+  assert.equal(stripWin32DeviceNamespacePrefix('//?/C:/repo/src'), 'C:/repo/src');
+  assert.equal(stripWin32DeviceNamespacePrefix('//./C:/repo/src'), 'C:/repo/src');
+  assert.equal(stripWin32DeviceNamespacePrefix('/??/C:/repo/src'), 'C:/repo/src');
+  assert.equal(stripWin32DeviceNamespacePrefix('\\\\?\\UNC\\server\\share\\src'), '\\\\server\\share\\src');
+  assert.equal(stripWin32DeviceNamespacePrefix('\\\\.\\UNC\\server\\share\\src'), '\\\\server\\share\\src');
+
+  assert.throws(
+    () => stripWin32DeviceNamespacePrefix('\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\src'),
+    /unsupported Windows device-namespace or volume path/
+  );
+  assert.throws(
+    () => stripWin32DeviceNamespacePrefix('\\\\.\\PhysicalDrive0'),
+    /unsupported Windows device-namespace or volume path/
+  );
+});
+
+test('path-jail: isSameOrSubpath correctly detects subpath relations', () => {
+  assert.equal(isSameOrSubpath(join(root, 'dist'), root), true);
+  assert.equal(isSameOrSubpath(join(root, 'dist', 'css'), root), true);
+  assert.equal(isSameOrSubpath(root, join(root, 'dist')), false);
+  assert.equal(isSameOrSubpath(tmpdir(), root), false);
 });

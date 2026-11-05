@@ -1,51 +1,256 @@
-// Packages downloadable asset zip bundles for Godot, Aseprite, and GIMP/Inkscape/Krita
+// Packages downloadable asset zip bundles for Godot, Aseprite, and GIMP/Inkscape/Krita,
+// and generates cryptographic supply-chain manifests (sri.json, manifest.json, SHA256SUMS.txt).
 // Outputs:
-//   dist/assets/tol-palettes-godot.zip    (containing addons/tol_palettes/...)
-//   dist/assets/tol-palettes-aseprite.zip (containing *.gpl with Aseprite headers)
-//   dist/assets/tol-palettes-gpl.zip      (containing standard *.gpl palettes)
+//   dist/assets/tol-palettes-godot.zip    (containing addons/tol_palettes/..., LICENSE, NOTICE)
+//   dist/assets/tol-palettes-aseprite.zip (containing *.gpl with Aseprite headers, LICENSE, NOTICE)
+//   dist/assets/tol-palettes-gpl.zip      (containing standard *.gpl palettes, LICENSE, NOTICE)
+//   dist/sri.json                         (SHA-384 integrity hashes and byte/gzip sizes for CSS, JS, JSON)
+//   dist/manifest.json                    (artifact SHA-256 hashes and size_bytes)
+//   dist/SHA256SUMS.txt                   (covering all uploaded release assets)
 
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildZip, collectDirectoryEntries } from './zip-util.mjs';
+import { gzipSync } from 'node:zlib';
+import { assertValidMtimeOption, resolveOutDir } from './path-jail.mjs';
+import { buildZip, collectDirectoryEntries, resolveDefaultZipMtime } from './zip-util.mjs';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const assetsDir = join(root, 'dist', 'assets');
-const godotAddonDir = join(root, 'dist', 'godot', 'addons', 'tol_palettes');
-const asepriteDir = join(root, 'dist', 'aseprite');
-const gplDir = join(root, 'dist', 'gpl');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
-export function packageAllAssets() {
+function sha384(content) {
+  return 'sha384-' + createHash('sha384').update(content).digest('base64');
+}
+
+function sha256Hex(content) {
+  return Buffer.isBuffer(content)
+    ? createHash('sha256').update(content).digest('hex')
+    : createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+export function generateSriManifest(targetDist = join(root, 'dist')) {
+  const cssDir = join(targetDist, 'css');
+  const jsDir = join(targetDist, 'js');
+  const jsonDir = join(targetDist, 'json');
+
+  const filesMap = {};
+
+  if (existsSync(cssDir)) {
+    const cssFiles = readdirSync(cssDir).filter((f) => f.endsWith('.css')).sort();
+    for (const file of cssFiles) {
+      const fullPath = join(cssDir, file);
+      const buf = readFileSync(fullPath);
+      filesMap[`dist/css/${file}`] = {
+        bytes: buf.length,
+        gzipBytes: gzipSync(buf).length,
+        integrity: sha384(buf),
+      };
+    }
+  }
+
+  if (existsSync(jsDir)) {
+    const jsFiles = ['index.js', 'index.d.ts'];
+    for (const file of jsFiles) {
+      const fullPath = join(jsDir, file);
+      if (existsSync(fullPath)) {
+        const buf = readFileSync(fullPath);
+        filesMap[`dist/js/${file}`] = {
+          bytes: buf.length,
+          gzipBytes: gzipSync(buf).length,
+          integrity: sha384(buf),
+        };
+      }
+    }
+  }
+
+  if (existsSync(jsonDir)) {
+    const jsonPath = join(jsonDir, 'schemes.json');
+    if (existsSync(jsonPath)) {
+      const buf = readFileSync(jsonPath);
+      filesMap['dist/json/schemes.json'] = {
+        bytes: buf.length,
+        gzipBytes: gzipSync(buf).length,
+        integrity: sha384(buf),
+      };
+    }
+  }
+
+  const sortedFiles = {};
+  for (const k of Object.keys(filesMap).sort()) {
+    sortedFiles[k] = filesMap[k];
+  }
+
+  return {
+    package: pkg.name,
+    version: pkg.version,
+    files: sortedFiles,
+  };
+}
+
+export function packageAllAssets(opts = {}) {
+  const targetDist = resolveOutDir(opts);
+  const validatedMtime = assertValidMtimeOption(opts);
+  const effectiveMtime = validatedMtime !== undefined ? validatedMtime : resolveDefaultZipMtime(opts);
+
+  const assetsDir = join(targetDist, 'assets');
+  const godotAddonDir = join(targetDist, 'godot', 'addons', 'tol_palettes');
+  const asepriteDir = join(targetDist, 'aseprite');
+  const gplDir = join(targetDist, 'gpl');
+  const licensePath = join(root, 'LICENSE');
+  const noticePath = join(root, 'NOTICE');
+
   if (!existsSync(godotAddonDir) || !existsSync(asepriteDir) || !existsSync(gplDir)) {
     throw new Error('Required distribution directories not found. Run npm run generate:game first.');
   }
+  if (!existsSync(licensePath) || !existsSync(noticePath)) {
+    throw new Error('Required LICENSE or NOTICE file not found in repository root.');
+  }
+
+  const licenseBuf = readFileSync(licensePath);
+  const noticeBuf = readFileSync(noticePath);
 
   // 1. Godot addon zip (interior root: addons/tol_palettes/...)
-  const godotEntries = collectDirectoryEntries(godotAddonDir, 'addons/tol_palettes');
-  const godotZip = buildZip(godotEntries);
+  const godotEntries = collectDirectoryEntries(godotAddonDir, 'addons/tol_palettes', { mtime: effectiveMtime });
+  godotEntries.push({
+    path: 'addons/tol_palettes/LICENSE',
+    data: licenseBuf,
+    mtime: effectiveMtime,
+  });
+  godotEntries.push({
+    path: 'addons/tol_palettes/NOTICE',
+    data: noticeBuf,
+    mtime: effectiveMtime,
+  });
+  const godotZip = buildZip(godotEntries, { mtime: effectiveMtime });
 
-  // 2. Aseprite zip (interior files: <id>.gpl)
-  const asepriteEntries = collectDirectoryEntries(asepriteDir);
-  const asepriteZip = buildZip(asepriteEntries);
+  // 2. Aseprite zip (interior files: <id>.gpl, LICENSE, NOTICE)
+  const asepriteEntries = collectDirectoryEntries(asepriteDir, '', { mtime: effectiveMtime });
+  asepriteEntries.push({
+    path: 'LICENSE',
+    data: licenseBuf,
+    mtime: effectiveMtime,
+  });
+  asepriteEntries.push({
+    path: 'NOTICE',
+    data: noticeBuf,
+    mtime: effectiveMtime,
+  });
+  const asepriteZip = buildZip(asepriteEntries, { mtime: effectiveMtime });
 
-  // 3. GPL zip (interior files: <id>.gpl)
-  const gplEntries = collectDirectoryEntries(gplDir);
-  const gplZip = buildZip(gplEntries);
+  // 3. GPL zip (interior files: <id>.gpl, LICENSE, NOTICE)
+  const gplEntries = collectDirectoryEntries(gplDir, '', { mtime: effectiveMtime });
+  gplEntries.push({
+    path: 'LICENSE',
+    data: licenseBuf,
+    mtime: effectiveMtime,
+  });
+  gplEntries.push({
+    path: 'NOTICE',
+    data: noticeBuf,
+    mtime: effectiveMtime,
+  });
+  const gplZip = buildZip(gplEntries, { mtime: effectiveMtime });
+
+  mkdirSync(assetsDir, { recursive: true });
+  writeFileSync(join(assetsDir, 'tol-palettes-godot.zip'), godotZip);
+  writeFileSync(join(assetsDir, 'tol-palettes-aseprite.zip'), asepriteZip);
+  writeFileSync(join(assetsDir, 'tol-palettes-gpl.zip'), gplZip);
+
+  // 4. Generate dist/sri.json
+  const sri = generateSriManifest(targetDist);
+  const sriJson = JSON.stringify(sri, null, 2) + '\n';
+  writeFileSync(join(targetDist, 'sri.json'), sriJson, 'utf8');
+
+  // 5. Generate dist/manifest.json
+  const schemesJsonPath = join(targetDist, 'json', 'schemes.json');
+  const tolCssPath = join(targetDist, 'css', 'tol.css');
+  const tolPyPath = join(targetDist, 'py', 'tol_palettes.py');
+
+  const artifactSources = [
+    { name: 'schemes.json', buf: existsSync(schemesJsonPath) ? readFileSync(schemesJsonPath) : null },
+    { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },
+    { name: 'tol-palettes-aseprite.zip', buf: asepriteZip },
+    { name: 'tol-palettes-godot.zip', buf: godotZip },
+    { name: 'tol-palettes-gpl.zip', buf: gplZip },
+    { name: 'tol.css', buf: existsSync(tolCssPath) ? readFileSync(tolCssPath) : null },
+    { name: 'tol_palettes.py', buf: existsSync(tolPyPath) ? readFileSync(tolPyPath) : null },
+  ].filter((a) => a.buf !== null);
+
+  artifactSources.sort((a, b) => a.name.localeCompare(b.name));
+
+  const artifacts = {};
+  for (const item of artifactSources) {
+    artifacts[item.name] = {
+      sha256: sha256Hex(item.buf),
+      size_bytes: item.buf.length,
+    };
+  }
+
+  const manifest = {
+    name: pkg.name,
+    version: pkg.version,
+    artifacts,
+  };
+  const manifestJson = JSON.stringify(manifest, null, 2) + '\n';
+  writeFileSync(join(targetDist, 'manifest.json'), manifestJson, 'utf8');
+
+  // 6. Generate dist/SHA256SUMS.txt
+  // Covering all uploaded release assets:
+  // tol-palettes-{godot,aseprite,gpl}.zip, schemes.json, tol.css, tol_palettes.py, LICENSE, NOTICE, manifest.json, sri.json
+  const releaseAssets = [
+    { name: 'LICENSE', buf: licenseBuf },
+    { name: 'NOTICE', buf: noticeBuf },
+    { name: 'manifest.json', buf: Buffer.from(manifestJson, 'utf8') },
+    { name: 'schemes.json', buf: existsSync(schemesJsonPath) ? readFileSync(schemesJsonPath) : Buffer.alloc(0) },
+    { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },
+    { name: 'tol-palettes-aseprite.zip', buf: asepriteZip },
+    { name: 'tol-palettes-godot.zip', buf: godotZip },
+    { name: 'tol-palettes-gpl.zip', buf: gplZip },
+    { name: 'tol.css', buf: existsSync(tolCssPath) ? readFileSync(tolCssPath) : Buffer.alloc(0) },
+    { name: 'tol_palettes.py', buf: existsSync(tolPyPath) ? readFileSync(tolPyPath) : Buffer.alloc(0) },
+  ];
+  releaseAssets.sort((a, b) => a.name.localeCompare(b.name));
+
+  const sha256Sums = releaseAssets.map((f) => `${sha256Hex(f.buf)}  ${f.name}`).join('\n') + '\n';
+  writeFileSync(join(targetDist, 'SHA256SUMS.txt'), sha256Sums, 'utf8');
 
   return {
     'tol-palettes-godot.zip': godotZip,
     'tol-palettes-aseprite.zip': asepriteZip,
     'tol-palettes-gpl.zip': gplZip,
+    sri,
+    manifest,
+    sha256Sums,
   };
 }
 
+export const packageAssets = packageAllAssets;
+
+function parseCliOutDir(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
+    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
+  }
+  return undefined;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  const targetDist = resolveOutDir(opts);
+  const assetsDir = join(targetDist, 'assets');
+
   rmSync(assetsDir, { recursive: true, force: true });
   mkdirSync(assetsDir, { recursive: true });
 
-  const bundles = packageAllAssets();
-  for (const [name, buf] of Object.entries(bundles)) {
-    writeFileSync(join(assetsDir, name), buf);
+  const result = packageAllAssets(opts);
+  for (const name of ['tol-palettes-godot.zip', 'tol-palettes-aseprite.zip', 'tol-palettes-gpl.zip']) {
+    const buf = result[name];
     console.log(`Wrote dist/assets/${name} (${(buf.length / 1024).toFixed(1)} KB)`);
   }
+  console.log(`Wrote dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt.`);
 }
