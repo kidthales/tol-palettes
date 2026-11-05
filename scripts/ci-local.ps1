@@ -103,6 +103,11 @@ function Test-Gate0Workflows {
     # Exact job-id/step-name allowlist pairs (no regex matching) for non-verify steps
     $ExactStepAllowlist = @(
         "notify/Dispatch consolidated status card to #dev-ci-builds",
+        "notify/Dispatch Pages deployment status card to #dev-ci-builds",
+        "notify/Dispatch release status card to #dev-ci-builds",
+        "tag-guard/Verify release tag matches project metadata versions",
+        "verify/Install dependencies",
+        "verify/Install Python build tools and matplotlib",
         "build/Install dependencies",
         "build/Generate static gallery",
         "build/generate:gallery",

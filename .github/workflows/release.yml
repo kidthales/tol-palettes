@@ -5,18 +5,80 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
+  tag-guard:
+    name: Verify Release Tag & Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify release tag matches project metadata versions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="${RELEASE_TAG:-$REF_NAME}"
+          if [ -z "$TAG" ]; then
+            echo "::error::No release tag or ref name found."
+            exit 1
+          fi
+          PKG_VER=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PKG_VER}"
+          echo "Comparing release tag '$TAG' with expected tag '$EXPECTED_TAG'..."
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag '$TAG' does not match expected tag '$EXPECTED_TAG' (v + package.json version)."
+            exit 1
+          fi
+
+          PY_VER=$(node -p 'require("fs").readFileSync("pyproject.toml", "utf8").match(/^version\s*=\s*["'\''"]([^"'\''"]+)["'\''"]/m)[1]')
+          if [ "$PY_VER" != "$PKG_VER" ]; then
+            echo "::error::pyproject.toml version '$PY_VER' does not match package.json version '$PKG_VER'."
+            exit 1
+          fi
+
+          CFF_VER=$(node -p 'require("fs").readFileSync("CITATION.cff", "utf8").match(/^version:\s*([^\s\r\n]+)/m)[1]')
+          if [ "$CFF_VER" != "$PKG_VER" ]; then
+            echo "::error::CITATION.cff version '$CFF_VER' does not match package.json version '$PKG_VER'."
+            exit 1
+          fi
+
+          GODOT_VER=$(node -p 'require("fs").readFileSync("dist/godot/addons/tol_palettes/plugin.cfg", "utf8").match(/^version="([^"]+)"/m)[1]')
+          if [ "$GODOT_VER" != "$PKG_VER" ]; then
+            echo "::error::dist/godot/addons/tol_palettes/plugin.cfg version '$GODOT_VER' does not match package.json version '$PKG_VER'."
+            exit 1
+          fi
+
+          echo "Release tag '$TAG' matches version $PKG_VER across package.json, pyproject.toml, CITATION.cff, and plugin.cfg."
+
   verify:
     name: Verify Release via CI Pipeline
+    needs: [tag-guard]
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/ci.yml
 
   publish-npm:
     name: Publish to npm Public Registry
-    needs: verify
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,13 +86,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
@@ -51,7 +115,7 @@ jobs:
 
   publish-gpr:
     name: Publish to GitHub Packages
-    needs: verify
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,17 +123,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: 'https://npm.pkg.github.com'
-          cache: npm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
 
+      # zizmor: ignore[use-trusted-publishing] GitHub Packages authenticates via GITHUB_TOKEN packages:write, not OIDC trusted publishing
       - name: Publish to GitHub Packages (Idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,7 +153,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: verify
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -97,6 +164,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -116,20 +185,22 @@ jobs:
 
   attach-assets:
     name: Attach Release Asset Bundles
-    needs: verify
+    needs: [verify]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: npm
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
@@ -142,9 +213,80 @@ jobs:
       - name: Upload zip bundles to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          TAG_NAME="${RELEASE_TAG:-$REF_NAME}"
+          gh release upload "$TAG_NAME" \
             dist/assets/tol-palettes-godot.zip \
             dist/assets/tol-palettes-aseprite.zip \
             dist/assets/tol-palettes-gpl.zip \
             --clobber
+
+  notify:
+    name: Discord Release Notification
+    needs: [tag-guard, verify, publish-npm, publish-gpr, publish-pypi, attach-assets]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      WEBHOOK_URL: ${{ secrets.DISCORD_CI_WEBHOOK }}
+    steps:
+      - name: Dispatch release status card to #dev-ci-builds
+        if: env.WEBHOOK_URL != ''
+        env:
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+          NPM_STATUS: ${{ needs.publish-npm.result }}
+          GPR_STATUS: ${{ needs.publish-gpr.result }}
+          PYPI_STATUS: ${{ needs.publish-pypi.result }}
+          ASSETS_STATUS: ${{ needs.attach-assets.result || 'skipped' }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            COLOR=2263091
+            TITLE="🚀 Release Published — tol-palettes"
+          elif [ "$JOB_STATUS" = "cancelled" ]; then
+            COLOR=11184810
+            TITLE="⚪ Release Cancelled — tol-palettes"
+          else
+            COLOR=15087942
+            TITLE="❌ Release Failed — tol-palettes"
+          fi
+
+          jq -n \
+            --arg title "$TITLE" \
+            --arg url "$RUN_URL" \
+            --arg repo "$REPO" \
+            --arg tag "$REF_NAME" \
+            --arg sha "$SHA" \
+            --arg npm "$NPM_STATUS" \
+            --arg gpr "$GPR_STATUS" \
+            --arg pypi "$PYPI_STATUS" \
+            --arg assets "${ASSETS_STATUS:-skipped}" \
+            --argjson color "$COLOR" \
+            '{
+              username: "kidthales CI",
+              avatar_url: "https://kidthales.com/favicon-96x96.png",
+              embeds: [{
+                title: $title,
+                url: $url,
+                color: $color,
+                fields: [
+                  { name: "Repository", value: $repo, inline: true },
+                  { name: "Tag / Ref", value: $tag, inline: true },
+                  { name: "Commit", value: ($sha | .[0:7]), inline: true },
+                  { name: "npm Registry", value: $npm, inline: true },
+                  { name: "GitHub Packages", value: $gpr, inline: true },
+                  { name: "PyPI", value: $pypi, inline: true },
+                  { name: "Asset Bundles", value: $assets, inline: true }
+                ],
+                footer: {
+                  text: "GitHub Actions • tol-palettes",
+                  icon_url: "https://kidthales.com/favicon-96x96.png"
+                }
+              }]
+            }' | curl -fsSL -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" || echo "Discord notification failed (non-blocking)"
