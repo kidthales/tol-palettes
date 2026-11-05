@@ -24,6 +24,9 @@ test('npm pack --dry-run enforces size budgets and excludes dev/CI files', () =>
   assert.ok(paths.includes('dist/js/index.d.ts'), 'dist/js/index.d.ts must be included');
   assert.ok(paths.includes('dist/css/tol.css'), 'dist/css/tol.css must be included');
   assert.ok(paths.includes('dist/sri.json'), 'dist/sri.json must be included');
+  assert.ok(paths.includes('dist/sri.d.ts'), 'dist/sri.d.ts must be included');
+  assert.ok(paths.includes('dist/json/schemes.json'), 'dist/json/schemes.json must be included');
+  assert.ok(paths.includes('dist/json/schemes.d.ts'), 'dist/json/schemes.d.ts must be included');
   assert.ok(paths.includes('dist/py/tol_palettes.py'), 'dist/py/tol_palettes.py must be included');
 
   for (const p of paths) {
@@ -51,8 +54,15 @@ test('all package.json exports resolve to existing files or directories', () => 
   }
 });
 
-test('package.json exports ./sri pointing to dist/sri.json', () => {
-  assert.equal(pkg.exports['./sri'], './dist/sri.json');
+test('package.json exports ./sri and ./schemes.json configure types conditions', () => {
+  assert.deepEqual(pkg.exports['./sri'], {
+    types: './dist/sri.d.ts',
+    default: './dist/sri.json',
+  });
+  assert.deepEqual(pkg.exports['./schemes.json'], {
+    types: './dist/json/schemes.d.ts',
+    default: './dist/json/schemes.json',
+  });
   const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
   assert.equal(sri.package, pkg.name);
   assert.equal(sri.version, pkg.version);
@@ -70,4 +80,51 @@ test('external ESM consumer import and TypeScript declaration integrity', async 
   assert.match(dts, /export interface Scheme\b/);
   assert.match(dts, /export declare const schemes: Readonly<Record<SchemeId, Scheme>>;/);
   assert.match(dts, /export declare function interpolate\(/);
+});
+
+test('version parity across package.json, pyproject.toml, CITATION.cff, and plugin.cfg', () => {
+  const pkgVer = pkg.version;
+
+  const pyToml = readFileSync(join(root, 'pyproject.toml'), 'utf8');
+  const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
+  assert.ok(pyMatch, 'pyproject.toml must define version');
+  assert.equal(pyMatch[1], pkgVer, `pyproject.toml version ${pyMatch[1]} != ${pkgVer}`);
+
+  const cff = readFileSync(join(root, 'CITATION.cff'), 'utf8');
+  const cffMatch = cff.match(/^version:\s*([^\s\r\n]+)/m);
+  assert.ok(cffMatch, 'CITATION.cff must define version');
+  assert.equal(cffMatch[1], pkgVer, `CITATION.cff version ${cffMatch[1]} != ${pkgVer}`);
+
+  const godotCfg = readFileSync(join(root, 'dist', 'godot', 'addons', 'tol_palettes', 'plugin.cfg'), 'utf8');
+  const godotMatch = godotCfg.match(/^version="([^"]+)"/m);
+  assert.ok(godotMatch, 'plugin.cfg must define version');
+  assert.equal(godotMatch[1], pkgVer, `plugin.cfg version ${godotMatch[1]} != ${pkgVer}`);
+});
+
+test('release.yml workflow enforces tag-guard parity and uploads valid asset paths', () => {
+  const releaseYml = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+
+  // Verify tag-guard checks package.json, pyproject.toml, CITATION.cff, plugin.cfg
+  assert.match(releaseYml, /require\('\.\/package\.json'\)\.version/);
+  assert.match(releaseYml, /pyproject\.toml/);
+  assert.match(releaseYml, /CITATION\.cff/);
+  assert.match(releaseYml, /dist\/godot\/addons\/tol_palettes\/plugin\.cfg/);
+
+  // Extract uploaded asset paths from attach-assets job
+  const uploadMatch = releaseYml.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+  assert.ok(uploadMatch, 'release.yml must upload assets with gh release upload');
+  const lines = uploadMatch[1]
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\\$/, '').trim())
+    .filter(Boolean);
+
+  assert.ok(lines.length > 0, 'Must specify asset paths for upload');
+  for (const assetPath of lines) {
+    assert.ok(existsSync(join(root, assetPath)), `Uploaded asset path does not exist on disk: ${assetPath}`);
+  }
+
+  // Ensure primary zip bundles are covered
+  assert.ok(lines.includes('dist/assets/tol-palettes-godot.zip'));
+  assert.ok(lines.includes('dist/assets/tol-palettes-aseprite.zip'));
+  assert.ok(lines.includes('dist/assets/tol-palettes-gpl.zip'));
 });

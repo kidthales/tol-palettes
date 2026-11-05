@@ -9,6 +9,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
     <title>Paul Tol Colour Schemes — Reference Gallery (Values Only)</title>
     <link rel="canonical" href="https://tol-palettes.kidthales.com/" />
     <meta name="description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
@@ -6031,48 +6032,6 @@
         Independent project: not affiliated with or endorsed by Paul Tol. See <code>NOTICE</code>.
       </p>
     </footer>
-    <script>
-      (() => {
-        const rootEl = document.documentElement;
-        const toggleBtn = document.getElementById('themeToggle');
-        const statusEl = document.getElementById('copyStatus');
-        document.querySelectorAll('[data-canvas-set]').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            const mode = btn.getAttribute('data-canvas-set');
-            if (mode === 'default') {
-              delete rootEl.dataset.canvas;
-            } else {
-              rootEl.dataset.canvas = mode;
-            }
-            document.querySelectorAll('[data-canvas-set]').forEach((b) => {
-              b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
-            });
-          });
-        });
-        toggleBtn?.addEventListener('click', () => {
-          const isDark =
-            rootEl.dataset.theme === 'dark' ||
-            (!rootEl.dataset.theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          rootEl.dataset.theme = isDark ? 'light' : 'dark';
-        });
-        document.addEventListener('click', async (e) => {
-          const btn = e.target.closest('[data-copy-hex]');
-          if (!btn) return;
-          const hex = btn.getAttribute('data-copy-hex');
-          try {
-            await navigator.clipboard.writeText(hex);
-            if (statusEl) statusEl.textContent = 'Copied ' + hex;
-            const codeEl = btn.querySelector('code');
-            const originalText = codeEl ? codeEl.textContent : btn.textContent;
-            btn.classList.add('copied');
-            if (codeEl) codeEl.textContent = 'Copied!';
-            setTimeout(() => {
-              btn.classList.remove('copied');
-              if (codeEl) codeEl.textContent = originalText;
-            }, 1200);
-          } catch (_) {}
-        });
-      })();
-    </script>
+    <script src="gallery.js" defer></script>
   </body>
 </html>

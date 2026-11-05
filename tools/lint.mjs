@@ -5,6 +5,7 @@
 // 4. Verifies zero tracked agent/scratch files in git
 // 5. Verifies package.json subpath exports resolve on disk
 // 6. Audits GitHub Actions workflows against AST drift and security invariants
+// 7. Audits dist/gallery/index.html for CSP compliance, anchors, and accessible controls
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -98,10 +99,69 @@ for (const v of workflowViolations) {
   errors.push(`[workflow] ${v}`);
 }
 
+// 7. Gallery HTML accessibility, anchors, and CSP audit
+const galleryHtmlPath = join(root, 'dist', 'gallery', 'index.html');
+if (existsSync(galleryHtmlPath)) {
+  const html = readFileSync(galleryHtmlPath, 'utf8');
+
+  // Reject inline <script> tags (all scripts must be external for script-src 'self')
+  const inlineScriptRegex = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let scriptMatch;
+  while ((scriptMatch = inlineScriptRegex.exec(html)) !== null) {
+    if (scriptMatch[1].trim().length > 0) {
+      errors.push('[gallery] Inline <script> tag detected in dist/gallery/index.html (CSP script-src \'self\' violation).');
+    }
+  }
+
+  // Reject inline on* event handlers
+  const inlineEventRegex = /\s(on[a-z]+)\s*=\s*["'][^"']*["']/gi;
+  let eventMatch;
+  while ((eventMatch = inlineEventRegex.exec(html)) !== null) {
+    errors.push(`[gallery] Inline event handler "${eventMatch[1]}" detected in dist/gallery/index.html (CSP violation).`);
+  }
+
+  // Reject broken #scheme-* anchors
+  const anchorRegex = /href="#(scheme-[a-z0-9-]+)"/gi;
+  let anchorMatch;
+  while ((anchorMatch = anchorRegex.exec(html)) !== null) {
+    const targetId = anchorMatch[1];
+    if (!html.includes(`id="${targetId}"`)) {
+      errors.push(`[gallery] Broken anchor href="#${targetId}" (no matching element with id="${targetId}").`);
+    }
+  }
+
+  // Reject unlabeled controls (<button>, <input>, <select>, <textarea>)
+  const buttonRegex = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+  let buttonMatch;
+  while ((buttonMatch = buttonRegex.exec(html)) !== null) {
+    const attrs = buttonMatch[1];
+    const inner = buttonMatch[2].replace(/<[^>]+>/g, '').trim();
+    const hasAriaLabel = /\baria-label\s*=\s*["'][^"']+["']/i.test(attrs);
+    const hasAriaLabelledby = /\baria-labelledby\s*=\s*["'][^"']+["']/i.test(attrs);
+    if (!hasAriaLabel && !hasAriaLabelledby && inner.length === 0) {
+      errors.push(`[gallery] Unlabeled <button> control detected: ${buttonMatch[0].slice(0, 80)}`);
+    }
+  }
+
+  const inputRegex = /<input\b([^>]*)>/gi;
+  let inputMatch;
+  while ((inputMatch = inputRegex.exec(html)) !== null) {
+    const attrs = inputMatch[1];
+    const isHidden = /\btype\s*=\s*["']hidden["']/i.test(attrs);
+    if (!isHidden) {
+      const hasAriaLabel = /\baria-label\s*=\s*["'][^"']+["']/i.test(attrs);
+      const hasAriaLabelledby = /\baria-labelledby\s*=\s*["'][^"']+["']/i.test(attrs);
+      if (!hasAriaLabel && !hasAriaLabelledby) {
+        errors.push(`[gallery] Unlabeled <input> control detected: ${inputMatch[0]}`);
+      }
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error('✖ Lint failed:');
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
 
-console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited.');
+console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited, gallery verified.');
