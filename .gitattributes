@@ -1,4 +1,4 @@
-* text=auto
+* text=auto eol=lf
 dist/** text eol=lf
 dist/assets/*.zip binary
 data/** text eol=lf

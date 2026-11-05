@@ -159,8 +159,8 @@ export function packageAllAssets(opts = {}) {
     throw new Error(`Required asset not found: ${tolPyPath}. Run npm run generate:py first.`);
   }
 
-  const licenseBuf = readFileSync(licensePath);
-  const noticeBuf = readFileSync(noticePath);
+  const licenseBuf = Buffer.from(readFileSync(licensePath, 'utf8').replace(/\r\n/g, '\n'), 'utf8');
+  const noticeBuf = Buffer.from(readFileSync(noticePath, 'utf8').replace(/\r\n/g, '\n'), 'utf8');
   const schemesJsonBuf = readFileSync(schemesJsonPath);
   const tolCssBuf = readFileSync(tolCssPath);
   const tolPyBuf = readFileSync(tolPyPath);
