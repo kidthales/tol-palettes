@@ -1,16 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from '../tools/validate.mjs';
-import { generateGalleryHtml, contrastRatio, escapeHtml } from '../tools/generate-gallery.mjs';
+import {
+  generateGalleryHtml,
+  generateGalleryJs,
+  contrastRatio,
+  escapeHtml,
+} from '../tools/generate-gallery.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const galleryPath = join(root, 'dist', 'gallery', 'index.html');
+const galleryJsPath = join(root, 'dist', 'gallery', 'gallery.js');
 const schemes = loadSchemes().map((x) => x.data);
 
-test('dist/gallery/index.html is deterministic, attributed and has no external dependencies', () => {
+test('dist/gallery/index.html is deterministic, attributed, CSP-hardened, and has no remote external assets', () => {
   const html = readFileSync(galleryPath, 'utf8');
   assert.equal(html, generateGalleryHtml(schemes));
   assert.match(html, /Paul Tol/);
@@ -22,10 +28,39 @@ test('dist/gallery/index.html is deterministic, attributed and has no external d
   assert.match(html, /<meta property="og:url" content="https:\/\/tol-palettes\.kidthales\.com\/" \/>/);
   assert.match(html, /<meta name="twitter:card" content="summary" \/>/);
 
-  // No external stylesheets, scripts, or images
-  assert.doesNotMatch(html, /<link\b[^>]*rel="stylesheet"/i);
-  assert.doesNotMatch(html, /<script\b[^>]*src=/i);
-  assert.doesNotMatch(html, /<img\b[^>]*src=/i);
+  // Content-Security-Policy compliance
+  assert.match(
+    html,
+    /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" \/>/,
+  );
+
+  // External script reference to gallery.js
+  assert.match(html, /<script src="gallery\.js" defer><\/script>/);
+
+  // Zero inline <script> tags permitted
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
+
+  // Forbid remote stylesheets, scripts, images, or iframes
+  assert.doesNotMatch(html, /<link\b[^>]*rel=["']stylesheet["']/i);
+  assert.doesNotMatch(html, /<script\b[^>]*src=["'](?:https?:|\/\/)/i);
+  assert.doesNotMatch(html, /<img\b[^>]*src=["'](?:https?:|\/\/)/i);
+  assert.doesNotMatch(html, /<iframe\b/i);
+});
+
+test('dist/gallery/gallery.js exists, carries attribution, and matches generator output', () => {
+  assert.ok(existsSync(galleryJsPath), 'dist/gallery/gallery.js must exist');
+  const js = readFileSync(galleryJsPath, 'utf8');
+  assert.equal(js, generateGalleryJs());
+  assert.match(js, /Paul Tol/);
+  assert.match(js, /NOTICE/);
+  assert.match(js, /not affiliated with or endorsed by Paul Tol/);
+
+  // Client event logic and feedback
+  assert.match(js, /btn\.classList\.add\('copied'\)/);
+  assert.match(js, /codeEl\.textContent = 'Copied!'/);
+  assert.match(js, /document\.getElementById\('themeToggle'\)/);
+  assert.match(js, /navigator\.clipboard\.writeText/);
+  assert.match(js, /data-canvas-set/);
 });
 
 test('dist/gallery/CNAME exists and contains custom domain', () => {
@@ -36,6 +71,7 @@ test('dist/gallery/CNAME exists and contains custom domain', () => {
 
 test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios and keyboard controls', () => {
   const html = readFileSync(galleryPath, 'utf8');
+  const js = readFileSync(galleryJsPath, 'utf8');
 
   // Accessible theme toggle and aria-live copy status region
   assert.match(html, /id="themeToggle"/);
@@ -46,12 +82,15 @@ test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios 
 
   // Single-quote XSS escaping
   assert.equal(escapeHtml("Paul Tol's"), 'Paul Tol&#39;s');
-  assert.equal(escapeHtml('<script>"foo" & \'bar\'</script>'), '&lt;script&gt;&quot;foo&quot; &amp; &#39;bar&#39;&lt;/script&gt;');
+  assert.equal(
+    escapeHtml('<script>"foo" & \'bar\'</script>'),
+    '&lt;script&gt;&quot;foo&quot; &amp; &#39;bar&#39;&lt;/script&gt;',
+  );
 
   // Visual copy feedback and modern sr-status clip-path
   assert.match(html, /\.copy-btn\.copied/);
-  assert.match(html, /btn\.classList\.add\('copied'\)/);
-  assert.match(html, /codeEl\.textContent = 'Copied!'/);
+  assert.match(js, /btn\.classList\.add\('copied'\)/);
+  assert.match(js, /codeEl\.textContent = 'Copied!'/);
   assert.match(html, /clip-path:\s*inset\(50%\)/);
 
   for (const s of schemes) {
@@ -98,7 +137,7 @@ test('canvas preview theme tokens and button contrast ratios meet WCAG AAA witho
   // Active canvas toggle button contrast must be >= 7:1 (WCAG AAA)
   assert.match(
     html,
-    /\.canvas-btn\[aria-pressed='true'\]\s*\{[^}]*background:\s*var\(--fg\);[^}]*color:\s*var\(--bg\);[^}]*border-color:\s*var\(--fg\);[^}]*font-weight:\s*700;/
+    /\.canvas-btn\[aria-pressed='true'\]\s*\{[^}]*background:\s*var\(--fg\);[^}]*color:\s*var\(--bg\);[^}]*border-color:\s*var\(--fg\);[^}]*font-weight:\s*700;/,
   );
 
   // Light mode active button: #000000 on #FFFFFF (21:1 >= 7:1)

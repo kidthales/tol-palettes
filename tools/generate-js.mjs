@@ -1,5 +1,6 @@
 // Generates:
 //   dist/json/schemes.json   flat JSON bundle of all schemes (with attribution comment)
+//   dist/json/schemes.d.ts   TypeScript declarations for dist/json/schemes.json
 //   dist/js/index.js         side-effect-free, tree-shakeable ESM module + helpers
 //   dist/js/index.d.ts       TypeScript declarations for dist/js/index.js
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -311,6 +312,22 @@ export declare function discreteColors(schemeOrId: Scheme | SchemeId | string, n
 `;
 }
 
+export function generateJsonDts(schemes = loadSchemes().map((x) => x.data)) {
+  return `${HEADER}import type { Scheme, SchemeId } from '../js/index.js';
+
+export interface SchemesBundle {
+  readonly $comment: string;
+  readonly schemes: Readonly<Record<SchemeId, Scheme>>;
+}
+
+export declare const $comment: string;
+export declare const schemes: Readonly<Record<SchemeId, Scheme>>;
+
+declare const bundle: SchemesBundle;
+export default bundle;
+`;
+}
+
 export function generateJs(opts = {}) {
   const targetDist = resolveOutDir(opts);
   const schemes = loadSchemes().map((x) => x.data);
@@ -322,6 +339,7 @@ export function generateJs(opts = {}) {
   mkdirSync(jsDir, { recursive: true });
 
   writeFileSync(join(jsonDir, 'schemes.json'), generateJsonBundle(schemes));
+  writeFileSync(join(jsonDir, 'schemes.d.ts'), generateJsonDts(schemes));
   writeFileSync(join(jsDir, 'index.js'), generateJsModule(schemes));
   writeFileSync(join(jsDir, 'index.d.ts'), generateDts(schemes));
   return { jsonDir, jsDir };
@@ -342,5 +360,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const cliOutDir = parseCliOutDir();
   const opts = cliOutDir ? { outDir: cliOutDir } : {};
   generateJs(opts);
-  console.log('Wrote dist/json/schemes.json, dist/js/index.js and dist/js/index.d.ts.');
+  console.log('Wrote dist/json/schemes.json, dist/json/schemes.d.ts, dist/js/index.js and dist/js/index.d.ts.');
 }

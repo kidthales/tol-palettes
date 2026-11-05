@@ -30,6 +30,11 @@ For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_2_0.md`](docs/
 ### Fixed
 - Fixed gallery color masking and contrast compliance across interactive preview buttons and swatch elements.
 
+### Errata
+- Corrected Godot GDScript usage example in `docs/game.md` (`TolPalettes.MUTED_RED` -> `TolPalettes.MUTED_ROSE`) to align with canonical colour naming in `tol_colors.py`.
+- Hardened static reference gallery for strict `Content-Security-Policy: script-src 'self'` by extracting inline script into external `dist/gallery/gallery.js`.
+- Synchronized release asset bundle paths in `.github/workflows/release.yml` with generated distribution archives (`dist/assets/tol-palettes-{godot,aseprite,gpl}.zip`).
+
 ## [0.1.1] - 2026-10-18
 
 ### Documentation & Tooling

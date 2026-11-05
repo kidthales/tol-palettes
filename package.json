@@ -37,6 +37,7 @@
     "dist/js/",
     "dist/json/",
     "dist/sri.json",
+    "dist/sri.d.ts",
     "dist/py/tol_palettes.py",
     "dist/godot/",
     "dist/gpl/",
@@ -52,8 +53,14 @@
       "types": "./dist/js/index.d.ts",
       "default": "./dist/js/index.js"
     },
-    "./sri": "./dist/sri.json",
-    "./schemes.json": "./dist/json/schemes.json",
+    "./sri": {
+      "types": "./dist/sri.d.ts",
+      "default": "./dist/sri.json"
+    },
+    "./schemes.json": {
+      "types": "./dist/json/schemes.d.ts",
+      "default": "./dist/json/schemes.json"
+    },
     "./css/*": "./dist/css/*",
     "./js/*": "./dist/js/*",
     "./py/*": "./dist/py/*",
@@ -67,8 +74,10 @@
     "node": ">=22.2.0"
   },
   "scripts": {
-    "lint": "node tools/lint.mjs",
-    "test": "npm run lint && node --test",
+    "lint": "npm run check:types && node tools/lint.mjs",
+    "test": "npm run lint && npm run check:budgets && node --test",
+    "check:types": "tsc -p tests/fixtures/tsc/tsconfig.bundler.json && tsc -p tests/fixtures/tsc/tsconfig.node16.json",
+    "check:budgets": "node tools/check-budgets.mjs",
     "validate": "node tools/validate.mjs",
     "extract": "node tools/extract.mjs",
     "generate:css": "node tools/generate-css.mjs",
@@ -83,6 +92,7 @@
   },
   "devDependencies": {
     "ajv": "^8.17.1",
+    "typescript": "^7.0.2",
     "yaml": "^2.9.1"
   }
 }
