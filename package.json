@@ -36,6 +36,7 @@
     "dist/css/",
     "dist/js/",
     "dist/json/",
+    "dist/sri.json",
     "dist/py/tol_palettes.py",
     "dist/godot/",
     "dist/gpl/",
@@ -51,6 +52,7 @@
       "types": "./dist/js/index.d.ts",
       "default": "./dist/js/index.js"
     },
+    "./sri": "./dist/sri.json",
     "./schemes.json": "./dist/json/schemes.json",
     "./css/*": "./dist/css/*",
     "./js/*": "./dist/js/*",
@@ -62,7 +64,7 @@
   },
   "sideEffects": false,
   "engines": {
-    "node": ">=22"
+    "node": ">=22.2.0"
   },
   "scripts": {
     "lint": "node tools/lint.mjs",

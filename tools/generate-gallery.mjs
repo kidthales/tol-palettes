@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { resolveOutDir } from './path-jail.mjs';
 import { cssFor } from './generate-css.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
@@ -433,11 +434,30 @@ ${kindSections}
 `;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const galleryDir = join(root, 'dist', 'gallery');
+export function generateGallery(opts = {}) {
+  const targetDist = resolveOutDir(opts);
+  const galleryDir = join(targetDist, 'gallery');
   rmSync(galleryDir, { recursive: true, force: true });
   mkdirSync(galleryDir, { recursive: true });
   writeFileSync(join(galleryDir, 'index.html'), generateGalleryHtml());
   writeFileSync(join(galleryDir, 'CNAME'), 'tol-palettes.kidthales.com\n');
+  return { galleryDir };
+}
+
+function parseCliOutDir(argv = process.argv.slice(2)) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
+      return argv[i + 1];
+    }
+    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
+    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
+  }
+  return undefined;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  generateGallery(opts);
   console.log('Wrote dist/gallery/index.html and dist/gallery/CNAME.');
 }
