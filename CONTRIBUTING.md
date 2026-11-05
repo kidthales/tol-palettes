@@ -113,7 +113,7 @@ For web consumers, subresource integrity (SRI) hashes are published in `dist/sri
 ```html
 <link
   rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.2.0/dist/css/tol.css"
+  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.0/dist/css/tol.css"
   integrity="sha384-..."
   crossorigin="anonymous"
 />

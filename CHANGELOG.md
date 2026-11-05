@@ -5,6 +5,36 @@ All notable changes to `@kidthales/tol-palettes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-05
+
+For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_3_0.md`](docs/RELEASE_NOTES_V0_3_0.md).
+
+### Added
+- **Clean-Room Supply Chain & Cryptographic Integrity**:
+  - Deterministic release asset packaging (`tools/package-assets.mjs` and `tools/zip-util.mjs`) generating reproducible zip archives (`tol-palettes-godot.zip`, `tol-palettes-aseprite.zip`, `tol-palettes-gpl.zip`) with fixed timestamps and normalized file permissions.
+  - Path jail utility (`tools/path-jail.mjs`) confining in-repo asset generation strictly within designated `dist/` distribution boundaries.
+  - Automated generation of cryptographic release manifests (`dist/manifest.json`, `dist/sri.json`, `dist/sri.d.ts`, and `dist/SHA256SUMS.txt`).
+  - Added `./sri` and `./schemes.json` export subpaths in `package.json` with dedicated TypeScript definitions (`dist/sri.d.ts`, `dist/json/schemes.d.ts`).
+  - GitHub Actions SLSA build provenance attestations on all release assets via `actions/attest-build-provenance`.
+- **Workflow Security & Static AST Auditing**:
+  - YAML AST workflow security auditor (`tools/check-workflows.mjs`) enforcing structural permissions, 40-character commit SHA pinning, checkout credential isolation (`persist-credentials: false`), timeout limits, and rejecting unescaped expression injections in run scripts.
+  - Remote CI security scanning job with `gitleaks` secret audit and `zizmor` GitHub Actions static analysis pinned to v1.31.1.
+  - 4-leg verification matrix across Node [22, 24] and Python [3.12, 3.13] across Ubuntu, Windows, and macOS runners.
+  - Fail-closed tag-guard job in `.github/workflows/release.yml` verifying exact version alignment across `package.json`, `pyproject.toml`, `CITATION.cff`, and `plugin.cfg` before triggering release jobs.
+- **Bundle Budgets & Quality Gates**:
+  - Automated bundle size budget verification (`tools/check-budgets.mjs` via `npm run check:budgets`) tracking raw, gzip (level 9), and brotli (quality 11) sizes across all distributable bundles against hard limits.
+  - Dual `tsconfig` verification gate (`check:types`) validating exports across both `bundler` and `node16` module resolution strategies.
+  - Real `matplotlib` colormap testing in `tests/py.test.mjs` verifying RGBA stop sampling, bad color fallbacks, and boundary conditions.
+  - Swatch gallery Content Security Policy hardening (`base-uri 'none'`, `form-action 'none'`, `script-src 'self'`).
+
+### Changed
+- Bumped project version to `0.3.0` across `package.json`, `package-lock.json`, and `pyproject.toml`.
+- Updated `dist/godot/addons/tol_palettes/plugin.cfg` to register `version="0.3.0"`.
+- Pinned CDN references in `docs/css.md`, `SECURITY.md`, and `CONTRIBUTING.md` to `0.3.0`.
+- Updated `SECURITY.md` supported versions table to include `0.3.x`.
+- Updated `CITATION.cff` release version to `0.3.0` and release date to `2026-11-05`.
+- Upgraded `scripts/ci-local.ps1` to a 5-gate local CI runner generating cryptographic CI receipts (`.ci-local/receipt.json`).
+
 ## [0.2.0] - 2026-10-28
 
 For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_2_0.md`](docs/RELEASE_NOTES_V0_2_0.md).
