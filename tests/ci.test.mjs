@@ -6,9 +6,23 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = join(root, 'scripts', 'ci-local.ps1');
+
+function withTempFixture(files, fn) {
+  const dir = join(tmpdir(), `wf_fixture_${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(dir, name), content, 'utf8');
+    }
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 test('-CI with -Quick exits non-zero and enforces fail-closed contract', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-CI', '-Quick'], {
@@ -41,12 +55,9 @@ test('valid repository workflows pass Gate 0', () => {
 });
 
 test('fixture workflow with un-allowlisted inline step fails Gate 0', () => {
-  const fixtureDir = join(tmpdir(), `gate0_fixture_${randomUUID()}`);
-  mkdirSync(fixtureDir, { recursive: true });
-  try {
-    writeFileSync(
-      join(fixtureDir, 'unauthorized.yml'),
-      `name: Unauthorized
+  withTempFixture(
+    {
+      'unauthorized.yml': `name: Unauthorized
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -54,30 +65,26 @@ jobs:
       - name: Unauthorized inline run
         run: echo "rogue step"
 `,
-      'utf8',
-    );
-    const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    assert.notEqual(res.status, 0, 'Expected non-zero exit status for unallowlisted step');
-    const combined = (res.stdout || '') + (res.stderr || '');
-    assert.ok(
-      combined.includes('not in the Gate 0 exact allowlist'),
-      `Expected allowlist violation in output: ${combined}`,
-    );
-  } finally {
-    rmSync(fixtureDir, { recursive: true, force: true });
-  }
+    },
+    (fixtureDir) => {
+      const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      assert.notEqual(res.status, 0, 'Expected non-zero exit status for unallowlisted step');
+      const combined = (res.stdout || '') + (res.stderr || '');
+      assert.ok(
+        combined.includes('not in the Gate 0 exact allowlist'),
+        `Expected allowlist violation in output: ${combined}`,
+      );
+    },
+  );
 });
 
 test('fixture verify job with non-canonical runner fails Gate 0', () => {
-  const fixtureDir = join(tmpdir(), `gate0_fixture_${randomUUID()}`);
-  mkdirSync(fixtureDir, { recursive: true });
-  try {
-    writeFileSync(
-      join(fixtureDir, 'bad_verify.yml'),
-      `name: BadVerify
+  withTempFixture(
+    {
+      'bad_verify.yml': `name: BadVerify
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -85,21 +92,20 @@ jobs:
       - name: Invalid CI runner
         run: ./custom-runner.sh
 `,
-      'utf8',
-    );
-    const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    assert.notEqual(res.status, 0, 'Expected non-zero exit status for bad verify job');
-    const combined = (res.stdout || '') + (res.stderr || '');
-    assert.ok(
-      combined.includes("verify job 'verify' defines steps but does not invoke"),
-      `Expected verify job error in output: ${combined}`,
-    );
-  } finally {
-    rmSync(fixtureDir, { recursive: true, force: true });
-  }
+    },
+    (fixtureDir) => {
+      const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      assert.notEqual(res.status, 0, 'Expected non-zero exit status for bad verify job');
+      const combined = (res.stdout || '') + (res.stderr || '');
+      assert.ok(
+        combined.includes("verify job 'verify' defines steps but does not invoke"),
+        `Expected verify job error in output: ${combined}`,
+      );
+    },
+  );
 });
 
 test('all third-party actions across all workflow files are pinned to 40-character commit SHAs', () => {
@@ -170,3 +176,334 @@ test('ci-local.ps1 records gate4_dist_drift as not-applicable when -Quick or -Sk
   );
 });
 
+// ---------------------------------------------------------------------------
+// Unit tests: hasUnescapedExpression
+// ---------------------------------------------------------------------------
+
+test('hasUnescapedExpression correctly detects unescaped expressions', () => {
+  assert.equal(hasUnescapedExpression('echo ${{ github.sha }}'), true);
+  assert.equal(hasUnescapedExpression('${{ inputs.name }}'), true);
+  assert.equal(hasUnescapedExpression('run: | \n  echo "${{ github.event_name }}"'), true);
+});
+
+test('hasUnescapedExpression allows escaped expressions and plain strings', () => {
+  assert.equal(hasUnescapedExpression('echo \\${{ github.sha }}'), false);
+  assert.equal(hasUnescapedExpression('echo "$JOB_STATUS"'), false);
+  assert.equal(hasUnescapedExpression('./scripts/ci-local.ps1 -CI'), false);
+  assert.equal(hasUnescapedExpression(''), false);
+  assert.equal(hasUnescapedExpression(null), false);
+  assert.equal(hasUnescapedExpression(123), false);
+});
+
+// ---------------------------------------------------------------------------
+// Unit & fixture tests: auditWorkflows
+// ---------------------------------------------------------------------------
+
+test('auditWorkflows returns ok: true on repository workflows', () => {
+  const res = auditWorkflows(root);
+  assert.equal(res.ok, true, `Expected repo workflows to be valid, got violations: ${res.violations.join('; ')}`);
+  assert.equal(res.violations.length, 0);
+  assert.equal(res.length, 0);
+});
+
+test('auditWorkflows fails when top-level permissions block is missing or invalid', () => {
+  withTempFixture(
+    {
+      'missing_perms.yml': `name: MissingPerms
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('missing top-level permissions block')));
+    },
+  );
+
+  withTempFixture(
+    {
+      'invalid_perms.yml': `name: InvalidPerms
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("top-level permissions must be strictly '{ contents: read }'")));
+    },
+  );
+});
+
+test('auditWorkflows fails on unauthorized job write permissions', () => {
+  withTempFixture(
+    {
+      'unauthorized_job_write.yml': `name: BadJobPerms
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("unauthorized write permission for scope 'contents'")));
+    },
+  );
+});
+
+test('auditWorkflows fails on unpinned third-party action or non-canonical local action', () => {
+  withTempFixture(
+    {
+      'unpinned.yml': `name: Unpinned
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('must pin to 40-char commit SHA')));
+    },
+  );
+
+  withTempFixture(
+    {
+      'non_canonical.yml': `name: NonCanonical
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Local
+        uses: ../local-action
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('uses non-canonical relative path')));
+    },
+  );
+});
+
+test('auditWorkflows fails when actions/checkout is missing persist-credentials: false', () => {
+  withTempFixture(
+    {
+      'bad_checkout.yml': `name: BadCheckout
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: true
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('without persist-credentials: false')));
+    },
+  );
+});
+
+test('auditWorkflows fails when run script has unescaped expression or forbidden command', () => {
+  withTempFixture(
+    {
+      'unescaped.yml': `name: Unescaped
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: echo "branch is \${{ github.ref }}"
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('contains unescaped expression in run script')));
+    },
+  );
+
+  withTempFixture(
+    {
+      'forbidden_cmd.yml': `name: ForbiddenCommand
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: npm test
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('runs forbidden direct test/lint/pack command')));
+    },
+  );
+});
+
+test('auditWorkflows enforces ci.yml architectural contracts', () => {
+  // Missing concurrency
+  withTempFixture(
+    {
+      'ci.yml': `name: CI
+permissions:
+  contents: read
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+  notify:
+    if: always() && github.event_name != 'workflow_call'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch consolidated status card to
+        run: echo done
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('missing top-level concurrency isolation block')));
+    },
+  );
+
+  // Missing security job
+  withTempFixture(
+    {
+      'ci.yml': `name: CI
+permissions:
+  contents: read
+concurrency:
+  group: ci-\${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("missing dedicated 'security' job")));
+    },
+  );
+});
+
+test('auditWorkflows enforces pages.yml architectural contracts', () => {
+  withTempFixture(
+    {
+      'pages.yml': `name: Deploy GitHub Pages
+permissions:
+  contents: read
+concurrency:
+  group: pages-\${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Generate static gallery
+        run: npm run generate:gallery
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("missing 'verify' job delegation")));
+    },
+  );
+});
+
+test('auditWorkflows enforces release.yml architectural contracts', () => {
+  withTempFixture(
+    {
+      'release.yml': `name: Release
+permissions:
+  contents: read
+concurrency:
+  group: release-\${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - name: Verify release tag matches project metadata versions
+        run: echo no exit
+  verify:
+    uses: ./.github/workflows/ci.yml
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("tag-guard step must fail closed with 'exit 1'")));
+      assert.ok(res.violations.some((v) => v.includes("verify job must declare needs: [tag-guard]")));
+      assert.ok(res.violations.some((v) => v.includes("must set package-manager-cache: false")));
+    },
+  );
+});

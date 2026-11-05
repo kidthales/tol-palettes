@@ -4,12 +4,14 @@
 // 3. Verifies Paul Tol attribution headers across all generated files in dist/
 // 4. Verifies zero tracked agent/scratch files in git
 // 5. Verifies package.json subpath exports resolve on disk
+// 6. Audits GitHub Actions workflows against AST drift and security invariants
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
+import { auditWorkflows } from './check-workflows.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const errors = [];
@@ -90,10 +92,16 @@ for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
   }
 }
 
+// 6. GitHub Actions workflow AST & security audit
+const workflowViolations = auditWorkflows(root);
+for (const v of workflowViolations) {
+  errors.push(`[workflow] ${v}`);
+}
+
 if (errors.length > 0) {
   console.error('✖ Lint failed:');
   for (const e of errors) console.error(`  - ${e}`);
   process.exit(1);
 }
 
-console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified.');
+console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited.');
