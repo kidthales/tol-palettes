@@ -247,7 +247,7 @@ jobs:
             --clobber
 
       - name: Attest Build Provenance
-        uses: actions/attest-build-provenance@c074443f1a5fb4aeeae55b9c44569595d2c206d2 # v2.2.3
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
           subject-path: |
             dist/assets/*.zip
