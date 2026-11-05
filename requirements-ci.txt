@@ -1,0 +1,5 @@
+# CI Python build and testing dependencies
+# Pinned for supply-chain determinism across ubuntu, windows, and macos runners
+build==1.2.2.post1
+hatchling==1.27.0
+matplotlib==3.10.1

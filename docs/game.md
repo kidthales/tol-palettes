@@ -42,7 +42,7 @@ The `TolPalettes` class is registered via `class_name` and `@tool`, available ac
 ```gdscript
 # Access officially named colours via typed constants:
 var player_blue: Color = TolPalettes.BRIGHT_BLUE
-var alert_red: Color = TolPalettes.MUTED_RED
+var alert_red: Color = TolPalettes.MUTED_ROSE
 
 # Query color arrays:
 var sunset_colors: PackedColorArray = TolPalettes.get_colors("sunset")

@@ -6,11 +6,11 @@
     0. Gate 0: Workflow verify-job single-source contract (ci-local.ps1 -CI + exact job-id/step-name allowlist)
     1. Gate 1: Workflow action commit SHA pin verification, agent leak & secret audit
     2. Gate 2: PowerShell AST validation, linter & schema validation (npm run lint, npm run validate)
-    3. Gate 3: Test suite & packaging dry-run (npm test, npm pack --dry-run, python -m build)
-    4. Gate 4: Generated distribution drift audit (npm run generate -> git status dist)
+    3. Gate 3: Generated distribution drift audit (npm run generate -> git status dist data schema docs README.md)
+    4. Gate 4: Test suite & packaging dry-run (npm test, side-effect guard, npm pack --dry-run, python -m build)
 .PARAMETER CI
-    Enforces strict fail-closed contract for CI runners: rejects skip/quick flags,
-    fails hard on missing tools, and emits GitHub Actions log groups.
+    Enforces strict fail-closed contract for CI runners (auto-enabled when $env:GITHUB_ACTIONS is set):
+    rejects skip/quick flags, fails hard on missing tools, and emits GitHub Actions log groups.
 .PARAMETER Quick
     Runs lint, validate, and tests only; skips distribution regeneration drift check.
 .PARAMETER SkipGenerate
@@ -38,6 +38,12 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 
 $TotalTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
+# Auto-enable $CI when running under GitHub Actions
+$IsCI = $CI.IsPresent -or (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTIONS))
+if ($IsCI -and -not $CI) {
+    $CI = [switch]::Present
+}
 
 function Enter-CiGate {
     param([string]$Title)
@@ -93,260 +99,6 @@ if ($CI) {
     }
 }
 
-function Test-Gate0Workflows {
-    param([string]$TargetWorkflowsDir)
-
-    if (-not (Test-Path $TargetWorkflowsDir)) {
-        throw "Workflows directory not found: $TargetWorkflowsDir"
-    }
-
-    # Exact job-id/step-name allowlist pairs (no regex matching) for non-verify steps
-    $ExactStepAllowlist = @(
-        "notify/Dispatch consolidated status card to #dev-ci-builds",
-        "build/Install dependencies",
-        "build/Generate static gallery",
-        "build/generate:gallery",
-        "publish-npm/Install dependencies",
-        "publish-npm/Publish to npm (Idempotent with Provenance)",
-        "publish-gpr/Install dependencies",
-        "publish-gpr/Publish to GitHub Packages (Idempotent)",
-        "publish-pypi/Install build tool",
-        "publish-pypi/Build sdist and wheel",
-        "attach-assets/Install dependencies",
-        "attach-assets/Generate game assets and package zip bundles",
-        "attach-assets/package:assets",
-        "attach-assets/Package release asset bundles",
-        "attach-assets/Upload zip bundles to GitHub Release"
-    )
-
-    # Canonical single-source CI invocation strings accepted without allowlisting
-    $CanonicalCiRuns = @(
-        "./scripts/ci-local.ps1 -CI",
-        "pwsh ./scripts/ci-local.ps1 -CI",
-        "pwsh -File ./scripts/ci-local.ps1 -CI"
-    )
-
-    $wfFiles = @(Get-ChildItem -Path $TargetWorkflowsDir -File | Where-Object { $_.Extension -in @(".yml", ".yaml") })
-    if ($wfFiles.Count -eq 0) {
-        throw "Gate 0 failed: no workflow files (*.yml, *.yaml) found in $TargetWorkflowsDir"
-    }
-
-    $violations = @()
-
-    foreach ($wf in $wfFiles) {
-        $lines = @(Get-Content -Path $wf.FullName)
-        $inJobs = $false
-        $jobsIndent = -1
-        $currentJob = ""
-        $jobIndent = -1
-        $inSteps = $false
-        $stepsIndent = -1
-        $inStepItem = $false
-        $stepPropIndent = -1
-        $currentStepName = ""
-        $currentStepHasRun = $false
-        $currentStepRunLines = @()
-        $inRunBlock = $false
-        $runBlockIndent = -1
-
-        $jobHasSteps = $false
-        $jobUsesReusableWorkflow = ""
-        $jobRunsCanonicalCi = $false
-
-        for ($i = 0; $i -le $lines.Count; $i++) {
-            $rawLine = if ($i -lt $lines.Count) { $lines[$i] } else { "" }
-            $trimmed = $rawLine.Trim()
-
-            # Skip blank lines and comments unless inside a multiline run block
-            if ($i -lt $lines.Count -and ($trimmed -eq "" -or $trimmed.StartsWith("#"))) {
-                continue
-            }
-
-            $indent = $rawLine.Length - $rawLine.TrimStart().Length
-
-            # Handle multiline run block continuation
-            if ($inRunBlock) {
-                if ($i -lt $lines.Count -and $indent -gt $runBlockIndent) {
-                    $currentStepRunLines += $trimmed
-                    continue
-                } else {
-                    $inRunBlock = $false
-                }
-            }
-
-            # Helper logic to flush completed step before starting a new step, job, or EOF
-            $shouldFlushStep = $false
-            if ($inStepItem) {
-                if ($i -eq $lines.Count) {
-                    $shouldFlushStep = $true
-                } elseif ($indent -le $jobIndent) {
-                    $shouldFlushStep = $true
-                } elseif ($indent -le $stepsIndent -and -not $trimmed.StartsWith("-")) {
-                    $shouldFlushStep = $true
-                } elseif ($trimmed.StartsWith("- ") -or $trimmed -eq "-") {
-                    if ($indent -le $stepPropIndent) {
-                        $shouldFlushStep = $true
-                    }
-                }
-            }
-
-            if ($shouldFlushStep) {
-                if ($currentStepHasRun) {
-                    $runText = ($currentStepRunLines -join "`n").Trim()
-                    $pairKey = "$currentJob/$currentStepName"
-                    $isCanonicalCi = $CanonicalCiRuns -contains $runText
-                    $isAllowlisted = $ExactStepAllowlist -contains $pairKey
-
-                    if ($isCanonicalCi) {
-                        $jobRunsCanonicalCi = $true
-                    }
-
-                    if (-not $isCanonicalCi -and -not $isAllowlisted) {
-                        $violations += "$($wf.Name): job '$currentJob' step '$currentStepName' runs inline script ('$runText') instead of './scripts/ci-local.ps1 -CI' and pair '$pairKey' is not in the Gate 0 exact allowlist."
-                    }
-                }
-                $inStepItem = $false
-                $currentStepName = ""
-                $currentStepHasRun = $false
-                $currentStepRunLines = @()
-            }
-
-            # Check if current job is ending (EOF, new top-level section, or new job at jobIndent)
-            $isEndingJob = $false
-            if ($currentJob -ne "") {
-                if ($i -eq $lines.Count) {
-                    $isEndingJob = $true
-                } elseif ($indent -eq 0 -and $trimmed.EndsWith(":")) {
-                    $isEndingJob = $true
-                } elseif ($jobIndent -ne -1 -and $indent -eq $jobIndent -and -not $trimmed.StartsWith("-") -and $trimmed.EndsWith(":")) {
-                    $isEndingJob = $true
-                }
-            }
-
-            if ($isEndingJob) {
-                if ($currentJob -in @("test-and-build", "verify")) {
-                    if ($jobHasSteps -and -not $jobRunsCanonicalCi) {
-                        $violations += "$($wf.Name): verify job '$currentJob' defines steps but does not invoke './scripts/ci-local.ps1 -CI'."
-                    } elseif (-not $jobHasSteps -and $jobUsesReusableWorkflow -ne "./.github/workflows/ci.yml") {
-                        $violations += "$($wf.Name): verify job '$currentJob' must either invoke './scripts/ci-local.ps1 -CI' or call './.github/workflows/ci.yml' (got uses: '$jobUsesReusableWorkflow')."
-                    }
-                }
-            }
-
-            if ($i -eq $lines.Count) {
-                break
-            }
-
-            # Detect top-level sections
-            if ($indent -eq 0 -and $trimmed.EndsWith(":")) {
-                $sectionName = $trimmed.Substring(0, $trimmed.Length - 1).Trim()
-                if ($sectionName -eq "jobs") {
-                    $inJobs = $true
-                    $jobsIndent = 0
-                    $currentJob = ""
-                    $inSteps = $false
-                } else {
-                    $inJobs = $false
-                    $currentJob = ""
-                    $inSteps = $false
-                }
-                continue
-            }
-
-            if (-not $inJobs) {
-                continue
-            }
-
-            # Detect job ID under jobs:
-            if (($jobIndent -eq -1 -or $indent -eq $jobIndent) -and $indent -gt $jobsIndent -and -not $trimmed.StartsWith("-") -and $trimmed.EndsWith(":")) {
-                $jobCandidate = $trimmed.Substring(0, $trimmed.Length - 1).Trim()
-                if ($jobIndent -eq -1) {
-                    $jobIndent = $indent
-                }
-                if ($indent -eq $jobIndent) {
-                    $currentJob = $jobCandidate
-                    $inSteps = $false
-                    $stepsIndent = -1
-                    $jobHasSteps = $false
-                    $jobUsesReusableWorkflow = ""
-                    $jobRunsCanonicalCi = $false
-                    continue
-                }
-            }
-
-            if (-not $currentJob) {
-                continue
-            }
-
-            # Detect job-level uses: (reusable workflow call) when not inside steps:
-            if (-not $inSteps -and $indent -gt $jobIndent -and $trimmed.StartsWith("uses:")) {
-                $uVal = $trimmed.Substring(5).Trim()
-                if (($uVal.StartsWith("'") -and $uVal.EndsWith("'")) -or ($uVal.StartsWith('"') -and $uVal.EndsWith('"'))) {
-                    $uVal = $uVal.Substring(1, $uVal.Length - 2)
-                }
-                $jobUsesReusableWorkflow = $uVal
-                continue
-            }
-
-            # Detect steps: block within current job
-            if ($indent -gt $jobIndent -and $trimmed -eq "steps:") {
-                $inSteps = $true
-                $stepsIndent = $indent
-                $jobHasSteps = $true
-                continue
-            }
-
-            if ($inSteps -and $indent -le $stepsIndent -and -not $trimmed.StartsWith("-")) {
-                $inSteps = $false
-                continue
-            }
-
-            if ($inSteps) {
-                $propText = $trimmed
-                if ($trimmed.StartsWith("- ") -or $trimmed -eq "-") {
-                    $inStepItem = $true
-                    $currentStepName = ""
-                    $currentStepHasRun = $false
-                    $currentStepRunLines = @()
-                    $dashIdx = $rawLine.IndexOf("-")
-                    $propText = $trimmed.Substring(1).Trim()
-                    $stepPropIndent = $dashIdx + 2
-                }
-
-                if ($inStepItem -and $propText -ne "") {
-                    $colonIdx = $propText.IndexOf(":")
-                    if ($colonIdx -gt 0) {
-                        $propKey = $propText.Substring(0, $colonIdx).Trim()
-                        $propVal = $propText.Substring($colonIdx + 1).Trim()
-                        # Strip surrounding quotes
-                        if (($propVal.StartsWith("'") -and $propVal.EndsWith("'")) -or ($propVal.StartsWith('"') -and $propVal.EndsWith('"'))) {
-                            $propVal = $propVal.Substring(1, $propVal.Length - 2)
-                        }
-
-                        if ($propKey -eq "name") {
-                            $currentStepName = $propVal
-                        } elseif ($propKey -eq "run") {
-                            $currentStepHasRun = $true
-                            if ($propVal -eq "|" -or $propVal -eq ">" -or $propVal -eq "|-" -or $propVal -eq ">-" -or $propVal -eq "") {
-                                $inRunBlock = $true
-                                $runBlockIndent = $indent
-                            } else {
-                                $currentStepRunLines += $propVal
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if ($violations.Count -gt 0) {
-        foreach ($v in $violations) {
-            [Console]::Error.WriteLine("Gate 0 violation: $v")
-        }
-        throw "Gate 0 workflow single-source verification failed ($($violations.Count) violation(s))."
-    }
-}
 
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " tol-palettes Local CI Pipeline$(if ($CI) { ' [-CI Fail-Closed Mode]' } else { '' })" -ForegroundColor Cyan
@@ -357,8 +109,8 @@ $GateResults = [ordered]@{
     "gate0_workflow_contract"     = "not-applicable"
     "gate1_action_pins_and_leaks" = "not-applicable"
     "gate2_pwsh_ast_and_lint"     = "not-applicable"
-    "gate3_test_and_pack"         = "not-applicable"
-    "gate4_dist_drift"            = "not-applicable"
+    "gate3_dist_drift"            = "not-applicable"
+    "gate4_test_and_pack"         = "not-applicable"
 }
 
 $ActiveFlags = @()
@@ -367,13 +119,28 @@ if ($SkipGenerate) { $ActiveFlags += "-SkipGenerate" }
 
 Push-Location $RootDir
 try {
+    # Upfront runtime and dependency assertions
+    $NodeVersionRaw = (& node -p "process.versions.node").Trim()
+    $NodeVersionCore = ($NodeVersionRaw -split '[-+]')[0]
+    if ([System.Version]$NodeVersionCore -lt [System.Version]"22.2.0") {
+        throw "Node.js >= 22.2.0 is required; found $NodeVersionRaw."
+    }
+
+    & python -c "import matplotlib" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python 'matplotlib' module is required but failed to import. Run 'pip install matplotlib'."
+    }
+
     # -------------------------------------------------------------
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
     $EffectiveWorkflowsDir = if ($WorkflowsPath) { $WorkflowsPath } else { [System.IO.Path]::Combine($RootDir, ".github", "workflows") }
     Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
     try {
-        Test-Gate0Workflows -TargetWorkflowsDir $EffectiveWorkflowsDir
+        & node (Join-Path $RootDir "tools" "check-workflows.mjs") --workflows-dir $EffectiveWorkflowsDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "Gate 0 workflow single-source verification failed."
+        }
         $GateResults["gate0_workflow_contract"] = "pass"
         Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
     } finally {
@@ -515,67 +282,9 @@ try {
     }
 
     # -------------------------------------------------------------
-    # Gate 3: Test Suite & Packaging Verification
+    # Gate 3: Generated Distribution Drift Audit
     # -------------------------------------------------------------
-    Enter-CiGate "[3/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
-    try {
-        $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
-
-        Write-Host "  -> Running npm test..." -ForegroundColor DarkGray
-        & npm test
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "npm test failed with exit code $LASTEXITCODE."
-            throw "Gate 3 Failed: Unit tests failed."
-        }
-
-        Write-Host "  -> Running npm pack --dry-run..." -ForegroundColor DarkGray
-        & npm pack --dry-run
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "npm pack --dry-run failed with exit code $LASTEXITCODE."
-            throw "Gate 3 Failed: Package packaging dry-run failed."
-        }
-
-        Write-Host "  -> Running Python packaging verification (python -m build, wheel import)..." -ForegroundColor DarkGray
-        $pyTmp = New-Item -ItemType Directory -Path "$([System.IO.Path]::GetTempPath())tol_py_build_$([System.Guid]::NewGuid().ToString('N'))"
-        try {
-            & python -m build --no-isolation --outdir $pyTmp.FullName
-            if ($LASTEXITCODE -ne 0) {
-                Write-Fail "python -m build failed with exit code $LASTEXITCODE."
-                throw "Gate 3 Failed: Python build failed."
-            }
-
-            $wheels = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.whl")
-            $sdists = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.tar.gz")
-            if ($wheels.Count -eq 0 -or $sdists.Count -eq 0) {
-                Write-Fail "Expected .whl and .tar.gz distributions in build output."
-                throw "Gate 3 Failed: Missing wheel or sdist distribution."
-            }
-
-            # Verify wheel top-level module structure and execution
-            $pyExtract = Join-Path $pyTmp.FullName "extracted"
-            Expand-Archive -Path $wheels[0].FullName -DestinationPath $pyExtract -Force
-            & python -c "import sys; sys.path.insert(0, sys.argv[1]); import tol_palettes; cset = tol_palettes.tol_cset('bright'); assert len(cset.blue) == 7" $pyExtract
-            if ($LASTEXITCODE -ne 0) {
-                Write-Fail "Wheel import or functional execution test failed."
-                throw "Gate 3 Failed: Python wheel import test failed."
-            }
-            Write-Host "     * Python sdist & wheel packaging verified successfully" -ForegroundColor Green
-        } finally {
-            if (Test-Path $pyTmp.FullName) {
-                Remove-Item -Recurse -Force $pyTmp.FullName
-            }
-        }
-
-        $GateResults["gate3_test_and_pack"] = "pass"
-        Write-Pass "Test suite and packaging dry-run passed." $StepTimer
-    } finally {
-        Exit-CiGate
-    }
-
-    # -------------------------------------------------------------
-    # Gate 4: Generated Distribution Drift Audit
-    # -------------------------------------------------------------
-    Enter-CiGate "[4/4] Verifying generated distribution outputs are up to date..."
+    Enter-CiGate "[3/4] Verifying generated distribution outputs are up to date..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -584,24 +293,93 @@ try {
             & npm run generate
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "npm run generate failed with exit code $LASTEXITCODE."
-                throw "Gate 4 Failed: Distribution generation failed."
+                throw "Gate 3 Failed: Distribution generation failed."
             }
 
-            $DistStatus = & git status --porcelain dist
+            $DriftPaths = @('dist', 'data', 'schema', 'docs', 'README.md')
+            $DistStatus = & git status --porcelain -- $DriftPaths
             if ($DistStatus) {
-                Write-Fail "dist/ differs from a fresh generation. Run 'npm run generate' and commit the result."
+                Write-Fail "Generated files ($($DriftPaths -join ', ')) differ from a fresh generation. Run 'npm run generate' and commit the result."
                 Write-Host "Drift details:" -ForegroundColor Red
-                & git status --porcelain dist
-                & git diff --stat dist
-                throw "Gate 4 Failed: Generated distribution drift detected."
+                & git status --porcelain -- $DriftPaths
+                & git diff --stat -- $DriftPaths
+                throw "Gate 3 Failed: Generated distribution drift detected."
             }
 
-            $GateResults["gate4_dist_drift"] = "pass"
+            $GateResults["gate3_dist_drift"] = "pass"
             Write-Pass "Generated outputs are up to date and clean." $StepTimer
         } else {
-            $GateResults["gate4_dist_drift"] = "not-applicable"
+            $GateResults["gate3_dist_drift"] = "not-applicable"
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
+    } finally {
+        Exit-CiGate
+    }
+
+    # -------------------------------------------------------------
+    # Gate 4: Composite Test Suite & Packaging Verification
+    # -------------------------------------------------------------
+    Enter-CiGate "[4/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
+    try {
+        $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $PreTestStatus = (& git status --porcelain | Out-String)
+        Write-Host "  -> Running npm test..." -ForegroundColor DarkGray
+        & npm test
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "npm test failed with exit code $LASTEXITCODE."
+            throw "Gate 4 Failed: Unit tests failed."
+        }
+
+        # Verify working tree remains 100% clean and side-effect-free after npm test
+        $PostTestStatus = (& git status --porcelain | Out-String)
+        if ($PostTestStatus -ne $PreTestStatus) {
+            Write-Fail "Working tree was mutated by 'npm test'. Tests must be strictly read-only and side-effect-free."
+            Write-Host "Dirty files produced by tests:" -ForegroundColor Red
+            & git status --porcelain
+            throw "Gate 4 Failed: Tests produced working tree side effects."
+        }
+
+        Write-Host "  -> Running npm pack --dry-run..." -ForegroundColor DarkGray
+        & npm pack --dry-run
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "npm pack --dry-run failed with exit code $LASTEXITCODE."
+            throw "Gate 4 Failed: Package packaging dry-run failed."
+        }
+
+        Write-Host "  -> Running Python packaging verification (python -m build, wheel import)..." -ForegroundColor DarkGray
+        $pyTmp = New-Item -ItemType Directory -Path "$([System.IO.Path]::GetTempPath())tol_py_build_$([System.Guid]::NewGuid().ToString('N'))"
+        try {
+            & python -m build --no-isolation --outdir $pyTmp.FullName
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "python -m build failed with exit code $LASTEXITCODE."
+                throw "Gate 4 Failed: Python build failed."
+            }
+
+            $wheels = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.whl")
+            $sdists = @(Get-ChildItem -Path $pyTmp.FullName -Filter "*.tar.gz")
+            if ($wheels.Count -eq 0 -or $sdists.Count -eq 0) {
+                Write-Fail "Expected .whl and .tar.gz distributions in build output."
+                throw "Gate 4 Failed: Missing wheel or sdist distribution."
+            }
+
+            # Verify wheel top-level module structure and execution
+            $pyExtract = Join-Path $pyTmp.FullName "extracted"
+            Expand-Archive -Path $wheels[0].FullName -DestinationPath $pyExtract -Force
+            & python -c "import sys; sys.path.insert(0, sys.argv[1]); import tol_palettes; cset = tol_palettes.tol_cset('bright'); assert len(cset.blue) == 7" $pyExtract
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "Wheel import or functional execution test failed."
+                throw "Gate 4 Failed: Python wheel import test failed."
+            }
+            Write-Host "     * Python sdist & wheel packaging verified successfully" -ForegroundColor Green
+        } finally {
+            if (Test-Path $pyTmp.FullName) {
+                Remove-Item -Recurse -Force $pyTmp.FullName
+            }
+        }
+
+        $GateResults["gate4_test_and_pack"] = "pass"
+        Write-Pass "Test suite and packaging dry-run passed." $StepTimer
     } finally {
         Exit-CiGate
     }

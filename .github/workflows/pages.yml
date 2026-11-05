@@ -8,19 +8,31 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify & Test
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/ci.yml
+
   build:
+    name: Build & Package Showcase
+    needs: [verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -43,12 +55,74 @@ jobs:
           path: dist/gallery
 
   deploy:
+    name: Deploy to GitHub Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build]
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  notify:
+    name: Discord Pages Notification
+    needs: [verify, build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      WEBHOOK_URL: ${{ secrets.DISCORD_CI_WEBHOOK }}
+    steps:
+      - name: Dispatch Pages deployment status card to #dev-ci-builds
+        if: env.WEBHOOK_URL != ''
+        env:
+          JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            COLOR=2263091
+            TITLE="🌐 Pages Deployed — tol-palettes"
+          elif [ "$JOB_STATUS" = "cancelled" ]; then
+            COLOR=11184810
+            TITLE="⚪ Pages Deployment Cancelled — tol-palettes"
+          else
+            COLOR=15087942
+            TITLE="❌ Pages Deployment Failed — tol-palettes"
+          fi
+
+          jq -n \
+            --arg title "$TITLE" \
+            --arg url "$RUN_URL" \
+            --arg repo "$REPO" \
+            --arg branch "$BRANCH" \
+            --arg sha "$SHA" \
+            --argjson color "$COLOR" \
+            '{
+              username: "kidthales CI",
+              avatar_url: "https://kidthales.com/favicon-96x96.png",
+              embeds: [{
+                title: $title,
+                url: $url,
+                color: $color,
+                fields: [
+                  { name: "Repository", value: $repo, inline: true },
+                  { name: "Branch", value: $branch, inline: true },
+                  { name: "Commit", value: ($sha | .[0:7]), inline: true }
+                ],
+                footer: {
+                  text: "GitHub Actions • tol-palettes",
+                  icon_url: "https://kidthales.com/favicon-96x96.png"
+                }
+              }]
+            }' | curl -fsSL -H "Content-Type: application/json" -d @- "$WEBHOOK_URL" || echo "Discord notification failed (non-blocking)"

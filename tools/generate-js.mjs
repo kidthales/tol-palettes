@@ -1,11 +1,13 @@
 // Generates:
 //   dist/json/schemes.json   flat JSON bundle of all schemes (with attribution comment)
+//   dist/json/schemes.d.ts   TypeScript declarations for dist/json/schemes.json
 //   dist/js/index.js         side-effect-free, tree-shakeable ESM module + helpers
 //   dist/js/index.d.ts       TypeScript declarations for dist/js/index.js
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,7 +44,7 @@ export function rgbToHex(r, g, b) {
 }
 
 export function generateJsonBundle(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const map = {};
   for (const s of sorted) map[s.id] = s;
   return (
@@ -57,26 +59,7 @@ export function generateJsonBundle(schemes = loadSchemes().map((x) => x.data)) {
   );
 }
 
-export function generateJsModule(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
-  const constLines = sorted.map(
-    (s) => `export const ${toIdent(s.id)} = ${JSON.stringify(s, null, 2)};`,
-  );
-  const mapEntries = sorted.map((s) => `  ${JSON.stringify(s.id)}: ${toIdent(s.id)},`);
-  const listEntries = sorted.map((s) => `  ${toIdent(s.id)},`);
-
-  return `${HEADER}
-${constLines.join('\n\n')}
-
-export const schemes = {
-${mapEntries.join('\n')}
-};
-
-export const schemeList = [
-${listEntries.join('\n')}
-];
-
-/**
+export const JS_HELPERS = `/**
  * Look up a scheme by its canonical id (returns undefined if unknown).
  * @param {string} id
  */
@@ -93,7 +76,7 @@ export function getScheme(schemeOrId) {
     return schemeOrId;
   }
   const s = get(String(schemeOrId));
-  if (!s) throw new RangeError(\`Unknown Paul Tol scheme: \${schemeOrId}\`);
+  if (!s) throw new RangeError('Unknown Paul Tol scheme: ' + schemeOrId);
   return s;
 }
 
@@ -104,7 +87,7 @@ export function getScheme(schemeOrId) {
  */
 export function hexToRgb(hex) {
   if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(hex)) {
-    throw new TypeError(\`Invalid #RRGGBB hex colour: \${hex}\`);
+    throw new TypeError('Invalid #RRGGBB hex colour: ' + hex);
   }
   return [
     Number.parseInt(hex.slice(1, 3), 16),
@@ -123,7 +106,7 @@ export function hexToRgb(hex) {
 export function rgbToHex(r, g, b) {
   const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
   const hex2 = (v) => clamp(v).toString(16).toUpperCase().padStart(2, '0');
-  return \`#\${hex2(r)}\${hex2(g)}\${hex2(b)}\`;
+  return '#' + hex2(r) + hex2(g) + hex2(b);
 }
 
 /**
@@ -136,17 +119,17 @@ export function rgbToHex(r, g, b) {
  */
 export function interpolate(schemeOrId, t, options = {}) {
   if (typeof t !== 'number' || !Number.isFinite(t)) {
-    throw new TypeError(\`Expected a finite number t in [0, 1], got \${t}\`);
+    throw new TypeError('Expected a finite number t in [0, 1], got ' + t);
   }
   const scheme = getScheme(schemeOrId);
   if (scheme.interpolation === 'none') {
-    throw new TypeError(\`Scheme "\${scheme.id}" does not support linear interpolation (interpolation: "none")\`);
+    throw new TypeError('Scheme "' + scheme.id + '" does not support linear interpolation (interpolation: "none")');
   }
   let stops = scheme.colors;
   if (options && options.subrange) {
     const sub = (scheme.subranges ?? []).find((r) => r.id === options.subrange);
     if (!sub) {
-      throw new RangeError(\`Unknown subrange "\${options.subrange}" for scheme "\${scheme.id}"\`);
+      throw new RangeError('Unknown subrange "' + options.subrange + '" for scheme "' + scheme.id + '"');
     }
     stops = scheme.colors.slice(sub.from, sub.to + 1);
   }
@@ -167,7 +150,7 @@ export function interpolate(schemeOrId, t, options = {}) {
 }
 
 /**
- * Sample \`count\` evenly spaced interpolated hex stops across [0, 1].
+ * Sample count evenly spaced interpolated hex stops across [0, 1].
  * @param {string | object} schemeOrId
  * @param {number} count
  * @param {{ subrange?: string }} [options]
@@ -175,7 +158,7 @@ export function interpolate(schemeOrId, t, options = {}) {
  */
 export function sample(schemeOrId, count, options = {}) {
   if (!Number.isInteger(count) || count < 1) {
-    throw new RangeError(\`Sample count must be a positive integer, got \${count}\`);
+    throw new RangeError('Sample count must be a positive integer, got ' + count);
   }
   if (count === 1) return [interpolate(schemeOrId, 0.5, options)];
   const out = [];
@@ -193,7 +176,7 @@ export function sample(schemeOrId, count, options = {}) {
 export function discreteRainbow(n) {
   const lut = rainbowDiscrete.lut;
   if (!Number.isInteger(n) || n < 1 || n > lut.length) {
-    throw new RangeError(\`discreteRainbow length must be an integer in 1..\${lut.length}, got \${n}\`);
+    throw new RangeError('discreteRainbow length must be an integer in 1..' + lut.length + ', got ' + n);
   }
   return lut[n - 1].map((idx) => rainbowDiscrete.colors[idx].hex);
 }
@@ -206,7 +189,7 @@ export function discreteRainbow(n) {
 export function discreteRainbowBad(n) {
   const lut = rainbowDiscrete.lut;
   if (!Number.isInteger(n) || n < 1 || n > lut.length) {
-    throw new RangeError(\`discreteRainbowBad length must be an integer in 1..\${lut.length}, got \${n}\`);
+    throw new RangeError('discreteRainbowBad length must be an integer in 1..' + lut.length + ', got ' + n);
   }
   return rainbowDiscrete.lutBad?.[String(n)] ?? rainbowDiscrete.bad;
 }
@@ -225,7 +208,7 @@ export function discreteColors(schemeOrId, n) {
   if (scheme.lut) {
     const len = n === undefined ? scheme.lut.length : n;
     if (!Number.isInteger(len) || len < 1 || len > scheme.lut.length) {
-      throw new RangeError(\`Length for "\${scheme.id}" must be an integer in 1..\${scheme.lut.length}, got \${len}\`);
+      throw new RangeError('Length for "' + scheme.id + '" must be an integer in 1..' + scheme.lut.length + ', got ' + len);
     }
     return scheme.lut[len - 1].map((idx) => scheme.colors[idx].hex);
   }
@@ -235,10 +218,31 @@ export function discreteColors(schemeOrId, n) {
   return scheme.colors.map((c) => c.hex);
 }
 `;
+
+export function generateJsModule(schemes = loadSchemes().map((x) => x.data)) {
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const constLines = sorted.map(
+    (s) => `export const ${toIdent(s.id)} = ${JSON.stringify(s, null, 2)};`,
+  );
+  const mapEntries = sorted.map((s) => `  ${JSON.stringify(s.id)}: ${toIdent(s.id)},`);
+  const listEntries = sorted.map((s) => `  ${toIdent(s.id)},`);
+
+  return `${HEADER}
+${constLines.join('\n\n')}
+
+export const schemes = {
+${mapEntries.join('\n')}
+};
+
+export const schemeList = [
+${listEntries.join('\n')}
+];
+
+${JS_HELPERS}`;
 }
 
 export function generateDts(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const idUnion = sorted.map((s) => JSON.stringify(s.id)).join(' | ');
   const constDecls = sorted.map((s) => `export declare const ${toIdent(s.id)}: Scheme;`).join('\n');
 
@@ -310,17 +314,39 @@ export declare function discreteColors(schemeOrId: Scheme | SchemeId | string, n
 `;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+export function generateJsonDts(schemes = loadSchemes().map((x) => x.data)) {
+  return `${HEADER}import type { Scheme, SchemeId } from '../js/index.js';
+
+export interface SchemesBundle {
+  readonly $comment: string;
+  readonly schemes: Readonly<Record<SchemeId, Scheme>>;
+}
+
+declare const bundle: SchemesBundle;
+export default bundle;
+`;
+}
+
+export function generateJs(opts = {}) {
+  const targetDist = resolveOutDir(opts);
   const schemes = loadSchemes().map((x) => x.data);
-  const jsonDir = join(root, 'dist', 'json');
-  const jsDir = join(root, 'dist', 'js');
+  const jsonDir = join(targetDist, 'json');
+  const jsDir = join(targetDist, 'js');
   rmSync(jsonDir, { recursive: true, force: true });
   rmSync(jsDir, { recursive: true, force: true });
   mkdirSync(jsonDir, { recursive: true });
   mkdirSync(jsDir, { recursive: true });
 
   writeFileSync(join(jsonDir, 'schemes.json'), generateJsonBundle(schemes));
+  writeFileSync(join(jsonDir, 'schemes.d.ts'), generateJsonDts(schemes));
   writeFileSync(join(jsDir, 'index.js'), generateJsModule(schemes));
   writeFileSync(join(jsDir, 'index.d.ts'), generateDts(schemes));
-  console.log('Wrote dist/json/schemes.json, dist/js/index.js and dist/js/index.d.ts.');
+  return { jsonDir, jsDir };
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  generateJs(opts);
+  console.log('Wrote dist/json/schemes.json, dist/json/schemes.d.ts, dist/js/index.js and dist/js/index.d.ts.');
 }

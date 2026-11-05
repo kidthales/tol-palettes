@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,7 +82,7 @@ script=""
 }
 
 export function generateGodotScript(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const header = COMMENT_LINES.map((l) => `# ${l}`).join('\n');
 
   const namedConsts = [];
@@ -188,7 +189,7 @@ static func get_discrete_rainbow_bad(n: int) -> Color:
 }
 
 export function generateAllGame(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const gplFiles = new Map();
   const aseFiles = new Map();
   const godotFiles = new Map();
@@ -202,11 +203,12 @@ export function generateAllGame(schemes = loadSchemes().map((x) => x.data)) {
   return { gplFiles, aseFiles, godotFiles };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+export function generateGame(opts = {}) {
+  const targetDist = resolveOutDir(opts);
   const { gplFiles, aseFiles, godotFiles } = generateAllGame();
-  const gplDir = join(root, 'dist', 'gpl');
-  const aseDir = join(root, 'dist', 'aseprite');
-  const godotDir = join(root, 'dist', 'godot');
+  const gplDir = join(targetDist, 'gpl');
+  const aseDir = join(targetDist, 'aseprite');
+  const godotDir = join(targetDist, 'godot');
   const addonDir = join(godotDir, 'addons', 'tol_palettes');
 
   for (const dir of [gplDir, aseDir, godotDir, addonDir]) {
@@ -223,8 +225,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 
   // Also write plugin.cfg into the addon directory
   writeFileSync(join(addonDir, 'plugin.cfg'), generateGodotPluginCfg());
+  return { gplDir, aseDir, godotDir, addonDir };
+}
 
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  const res = generateGame(opts);
   console.log(
-    `Wrote ${gplFiles.size} files to dist/gpl, ${aseFiles.size} to dist/aseprite, ${godotFiles.size} to dist/godot, and addon under dist/godot/addons/tol_palettes.`,
+    `Wrote game palettes under ${res.godotDir} (gpl, aseprite, godot).`
   );
 }

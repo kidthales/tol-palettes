@@ -38,6 +38,11 @@ Multi-ecosystem distribution release expanding `@kidthales/tol-palettes` from so
   - Introduced `scripts/ci-local.ps1` automating all 4 local quality gates (linting, schema validation, test runner, build artifact checks).
   - Enforced strict deterministic generation checks (`npm run generate`) to guard against uncommitted generator drift.
 
+### Errata
+- **GDScript Named Constant Parity**: The Godot GDScript usage example in `docs/game.md` previously referenced `TolPalettes.MUTED_RED`. Since the muted scheme's red stop is canonically named `rose` in `tol_colors.py`, this has been corrected to `TolPalettes.MUTED_ROSE`.
+- **Static Gallery Content Security Policy**: Extracted inline script in `dist/gallery/index.html` into a dedicated external module `dist/gallery/gallery.js` to ensure compliance with strict `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'self';`.
+- **Release Asset Archive Paths**: Verified upload targets in `.github/workflows/release.yml` match the clean distribution archive filenames (`dist/assets/tol-palettes-godot.zip`, `dist/assets/tol-palettes-aseprite.zip`, and `dist/assets/tol-palettes-gpl.zip`).
+
 ## Installation
 
 ### JavaScript / TypeScript (npm)
@@ -57,7 +62,7 @@ pip install "tol-palettes[matplotlib]"
 
 ### Godot 4.x Addon
 
-Download `tol-palettes-godot-v0.2.0.zip` from the [GitHub Releases](https://github.com/kidthales/tol-palettes/releases) page and extract `addons/tol_palettes` into your Godot project root.
+Download `tol-palettes-godot.zip` from the [GitHub Releases](https://github.com/kidthales/tol-palettes/releases) page and extract `addons/tol_palettes` into your Godot project root.
 
 ### CDN
 

@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -73,7 +74,7 @@ function pyRepr(val, indent = 0) {
 }
 
 export function generatePyModule(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const byId = Object.fromEntries(sorted.map((s) => [s.id, s]));
 
   // Official qualitative sets with named fields (colors + extras, matching tol_colors.py 2022.10)
@@ -289,11 +290,19 @@ def tol_cmap(colormap=None, lut=None):
 `;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+export function generatePy(opts = {}) {
+  const targetDist = resolveOutDir(opts);
   const schemes = loadSchemes().map((x) => x.data);
-  const pyDir = join(root, 'dist', 'py');
+  const pyDir = join(targetDist, 'py');
   rmSync(pyDir, { recursive: true, force: true });
   mkdirSync(pyDir, { recursive: true });
   writeFileSync(join(pyDir, 'tol_palettes.py'), generatePyModule(schemes));
+  return { pyDir, filePath: join(pyDir, 'tol_palettes.py') };
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  generatePy(opts);
   console.log('Wrote dist/py/tol_palettes.py.');
 }

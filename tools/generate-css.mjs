@@ -10,11 +10,10 @@
 //   --tol-<id>-discrete-<k>      discrete variant when it differs (discreteIndexes)
 //   --tol-<id>-n<N>-<k>          discrete rainbow lookup: N requested colours, k-th colour
 import { mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 
 const HEADER = `/*
  * Colour values from Paul Tol's colour schemes (https://sronpersonalpages.nl/~pault/),
@@ -48,18 +47,26 @@ export function cssFor(s) {
 }
 
 export function generateAll(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const files = new Map();
   for (const s of sorted) files.set(`${s.id}.css`, HEADER + '\n' + cssFor(s));
   files.set('tol.css', HEADER + '\n' + sorted.map(cssFor).join('\n'));
   return files;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const dir = join(root, 'dist', 'css');
+export function generateCss(opts = {}) {
+  const targetDist = resolveOutDir(opts);
+  const dir = join(targetDist, 'css');
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const files = generateAll();
   for (const [name, text] of files) writeFileSync(join(dir, name), text);
-  console.log(`Wrote ${files.size} files to dist/css (${readdirSync(dir).length} entries).`);
+  return { dir, count: files.size };
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const cliOutDir = parseCliOutDir();
+  const opts = cliOutDir ? { outDir: cliOutDir } : {};
+  const res = generateCss(opts);
+  console.log(`Wrote ${res.count} files to ${res.dir} (${readdirSync(res.dir).length} entries).`);
 }

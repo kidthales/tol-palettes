@@ -10,6 +10,34 @@ import { generatePyModule } from '../tools/generate-py.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pyPath = join(root, 'dist', 'py', 'tol_palettes.py');
 
+function runPython(code) {
+  try {
+    return execFileSync('python3', ['-c', code], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    const isWindowsShimOrNotFound =
+      err.code === 'ENOENT' ||
+      err.status === 9009 ||
+      (typeof err.stderr === 'string' && err.stderr.includes('Python was not found'));
+
+    if (isWindowsShimOrNotFound) {
+      try {
+        return execFileSync('python', ['-c', code], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (innerErr) {
+        const details = innerErr.stderr || innerErr.stdout || innerErr.message;
+        throw new Error(`Python execution failed with 'python':\n${details}`);
+      }
+    }
+    const details = err.stderr || err.stdout || err.message;
+    throw new Error(`Python execution failed with 'python3':\n${details}`);
+  }
+}
+
 // Pinned official values from tol_colors.py 2022.10 (test fixture only)
 const OFFICIAL_CSETS = {
   bright: {
@@ -159,19 +187,15 @@ for name in tp.CMAP_NAMES:
   clrs, bad, mode = tp.tol_cmap_colors(name)
   out["cmaps"][name] = {"colors": list(clrs), "bad": bad, "mode": mode}
 
-for lut in range(1, 24):
+max_lut = len(tp._RAINBOW_DISCRETE_LUT)
+for lut in range(1, max_lut + 1):
   clrs, bad, mode = tp.tol_cmap_colors("rainbow_discrete", lut=lut)
   out["rainbow_discrete"][str(lut)] = {"colors": list(clrs), "bad": bad, "mode": mode}
 
 print(json.dumps(out))
 `;
 
-  let stdout;
-  try {
-    stdout = execFileSync('python3', ['-c', pyCheck], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    stdout = execFileSync('python', ['-c', pyCheck], { encoding: 'utf8' });
-  }
+  const stdout = runPython(pyCheck);
   const result = JSON.parse(stdout);
 
   assert.equal(result.schemes_count, 22);
@@ -185,9 +209,10 @@ print(json.dumps(out))
     assert.deepEqual(result.cmaps[name], expected, `cmap mismatch for ${name}`);
   }
 
-  // Verify rainbow_discrete across all 23 lengths and default (22)
+  // Verify rainbow_discrete across all lengths and default (22)
   const rdScheme = loadSchemes().find((s) => s.data.id === 'rainbow-discrete').data;
-  for (let n = 1; n <= 23; n++) {
+  const maxLut = rdScheme.lut.length;
+  for (let n = 1; n <= maxLut; n++) {
     const expectedColors = rdScheme.lut[n - 1].map((i) => rdScheme.colors[i].hex);
     const expectedBad = n === 23 ? '#777777' : '#FFFFFF';
     assert.deepEqual(result.rainbow_discrete[String(n)], {
@@ -206,4 +231,100 @@ print(json.dumps(out))
   assert.equal(result.cmaps.banded_12.colors.length, 12);
   assert.equal(result.cmaps.banded_16.colors.length, 16);
   assert.equal(result.cmaps.banded_20.colors.length, 20);
+});
+
+test('tol_cmap() and discretemap() execute against real matplotlib across all 22 schemes with RGBA stop sampling, bad colors, and ValueError negative cases', () => {
+  const pyScript = `
+import sys
+import numpy as np
+sys.path.insert(0, ${JSON.stringify(join(root, 'dist', 'py'))})
+import tol_palettes as tp
+from matplotlib.colors import to_rgba
+
+# 1. Execute tol_cmap() across all CMAP_NAMES (continuous and discrete)
+for name in tp.CMAP_NAMES:
+    if name == 'rainbow_discrete':
+        continue
+    clrs, bad, mode = tp.tol_cmap_colors(name)
+    cmap = tp.tol_cmap(name)
+    bad_rgba = cmap.get_bad()
+    expected_bad = to_rgba(bad)
+    assert np.allclose(bad_rgba, expected_bad), f"{name}: bad color mismatch"
+
+    # Sample stops at endpoints and intermediate positions
+    s0 = cmap(0.0)
+    s1 = cmap(1.0)
+    smid = cmap(0.5)
+    assert len(s0) == 4 and len(s1) == 4 and len(smid) == 4
+    for stop_rgba in (s0, s1, smid):
+        assert all(0.0 <= c <= 1.0 for c in stop_rgba)
+
+# 2. Execute discretemap() directly for discrete schemes and assert stop sampling
+discrete_names = [name for name in tp.CMAP_NAMES if name.endswith('_discrete') or name.startswith('banded_')]
+for name in discrete_names:
+    clrs, bad, mode = tp.tol_cmap_colors(name)
+    cmap = tp.discretemap(name, clrs)
+    cmap.set_bad(bad)
+    assert np.allclose(cmap.get_bad(), to_rgba(bad)), f"{name}: discretemap bad mismatch"
+    k = len(clrs)
+    for i in range(k):
+        t = (i + 0.5) / k
+        sample_rgba = cmap(t)
+        expected_rgba = to_rgba(clrs[i])
+        assert np.allclose(sample_rgba[:3], expected_rgba[:3], atol=1e-3), f"{name}: discretemap stop {i} mismatch"
+
+# 3. Execute tol_cmap('rainbow_discrete', lut=1..max_lut) and assert sampling and bad colors
+max_lut = len(tp._RAINBOW_DISCRETE_LUT)
+for lut in range(1, max_lut + 1):
+    clrs, bad, mode = tp.tol_cmap_colors('rainbow_discrete', lut=lut)
+    cmap = tp.tol_cmap('rainbow_discrete', lut=lut)
+    expected_bad = to_rgba(bad)
+    assert np.allclose(cmap.get_bad(), expected_bad), f"rainbow_discrete lut={lut} bad mismatch"
+    k = len(clrs)
+    for i in range(k):
+        t = (i + 0.5) / k
+        sample_rgba = cmap(t)
+        expected_rgba = to_rgba(clrs[i])
+        assert np.allclose(sample_rgba[:3], expected_rgba[:3], atol=1e-3), f"rainbow_discrete lut={lut} stop {i} mismatch"
+
+# 4. Negative test cases: ValueError for unknown colorset and colormap
+try:
+    tp.tol_cset('invalid_colorset_name')
+    assert False, "Expected ValueError for unknown colorset"
+except ValueError:
+    pass
+
+try:
+    tp.tol_cmap('invalid_colormap_name')
+    assert False, "Expected ValueError for unknown colormap"
+except ValueError:
+    pass
+
+try:
+    tp.tol_cmap_colors('invalid_colormap_name')
+    assert False, "Expected ValueError for unknown colormap in tol_cmap_colors"
+except ValueError:
+    pass
+
+# 5. Parity check: Verify all 22 schemes are covered
+all_ids = set(tp.SCHEMES.keys())
+covered = set()
+for c in tp.CSET_NAMES:
+    covered.add(c.replace('_', '-').lower())
+for m in tp.CMAP_NAMES:
+    if m == 'rainbow_discrete':
+        covered.add('rainbow-discrete')
+        continue
+    base = m.replace('_discrete', '').replace('_', '-').lower()
+    if base.startswith('rainbow-'):
+        covered.add('rainbow-smooth')
+    else:
+        covered.add(base)
+assert len(all_ids - covered) == 0, f"Uncovered schemes: {all_ids - covered}"
+
+print("OK")
+`;
+
+  const stdout = runPython(pyScript);
+  assert.equal(stdout.trim(), 'OK');
 });

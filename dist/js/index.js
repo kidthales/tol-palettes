@@ -1702,7 +1702,7 @@ export function getScheme(schemeOrId) {
     return schemeOrId;
   }
   const s = get(String(schemeOrId));
-  if (!s) throw new RangeError(`Unknown Paul Tol scheme: ${schemeOrId}`);
+  if (!s) throw new RangeError('Unknown Paul Tol scheme: ' + schemeOrId);
   return s;
 }
 
@@ -1713,7 +1713,7 @@ export function getScheme(schemeOrId) {
  */
 export function hexToRgb(hex) {
   if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(hex)) {
-    throw new TypeError(`Invalid #RRGGBB hex colour: ${hex}`);
+    throw new TypeError('Invalid #RRGGBB hex colour: ' + hex);
   }
   return [
     Number.parseInt(hex.slice(1, 3), 16),
@@ -1732,7 +1732,7 @@ export function hexToRgb(hex) {
 export function rgbToHex(r, g, b) {
   const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
   const hex2 = (v) => clamp(v).toString(16).toUpperCase().padStart(2, '0');
-  return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+  return '#' + hex2(r) + hex2(g) + hex2(b);
 }
 
 /**
@@ -1745,17 +1745,17 @@ export function rgbToHex(r, g, b) {
  */
 export function interpolate(schemeOrId, t, options = {}) {
   if (typeof t !== 'number' || !Number.isFinite(t)) {
-    throw new TypeError(`Expected a finite number t in [0, 1], got ${t}`);
+    throw new TypeError('Expected a finite number t in [0, 1], got ' + t);
   }
   const scheme = getScheme(schemeOrId);
   if (scheme.interpolation === 'none') {
-    throw new TypeError(`Scheme "${scheme.id}" does not support linear interpolation (interpolation: "none")`);
+    throw new TypeError('Scheme "' + scheme.id + '" does not support linear interpolation (interpolation: "none")');
   }
   let stops = scheme.colors;
   if (options && options.subrange) {
     const sub = (scheme.subranges ?? []).find((r) => r.id === options.subrange);
     if (!sub) {
-      throw new RangeError(`Unknown subrange "${options.subrange}" for scheme "${scheme.id}"`);
+      throw new RangeError('Unknown subrange "' + options.subrange + '" for scheme "' + scheme.id + '"');
     }
     stops = scheme.colors.slice(sub.from, sub.to + 1);
   }
@@ -1776,7 +1776,7 @@ export function interpolate(schemeOrId, t, options = {}) {
 }
 
 /**
- * Sample `count` evenly spaced interpolated hex stops across [0, 1].
+ * Sample count evenly spaced interpolated hex stops across [0, 1].
  * @param {string | object} schemeOrId
  * @param {number} count
  * @param {{ subrange?: string }} [options]
@@ -1784,7 +1784,7 @@ export function interpolate(schemeOrId, t, options = {}) {
  */
 export function sample(schemeOrId, count, options = {}) {
   if (!Number.isInteger(count) || count < 1) {
-    throw new RangeError(`Sample count must be a positive integer, got ${count}`);
+    throw new RangeError('Sample count must be a positive integer, got ' + count);
   }
   if (count === 1) return [interpolate(schemeOrId, 0.5, options)];
   const out = [];
@@ -1802,7 +1802,7 @@ export function sample(schemeOrId, count, options = {}) {
 export function discreteRainbow(n) {
   const lut = rainbowDiscrete.lut;
   if (!Number.isInteger(n) || n < 1 || n > lut.length) {
-    throw new RangeError(`discreteRainbow length must be an integer in 1..${lut.length}, got ${n}`);
+    throw new RangeError('discreteRainbow length must be an integer in 1..' + lut.length + ', got ' + n);
   }
   return lut[n - 1].map((idx) => rainbowDiscrete.colors[idx].hex);
 }
@@ -1815,7 +1815,7 @@ export function discreteRainbow(n) {
 export function discreteRainbowBad(n) {
   const lut = rainbowDiscrete.lut;
   if (!Number.isInteger(n) || n < 1 || n > lut.length) {
-    throw new RangeError(`discreteRainbowBad length must be an integer in 1..${lut.length}, got ${n}`);
+    throw new RangeError('discreteRainbowBad length must be an integer in 1..' + lut.length + ', got ' + n);
   }
   return rainbowDiscrete.lutBad?.[String(n)] ?? rainbowDiscrete.bad;
 }
@@ -1834,7 +1834,7 @@ export function discreteColors(schemeOrId, n) {
   if (scheme.lut) {
     const len = n === undefined ? scheme.lut.length : n;
     if (!Number.isInteger(len) || len < 1 || len > scheme.lut.length) {
-      throw new RangeError(`Length for "${scheme.id}" must be an integer in 1..${scheme.lut.length}, got ${len}`);
+      throw new RangeError('Length for "' + scheme.id + '" must be an integer in 1..' + scheme.lut.length + ', got ' + len);
     }
     return scheme.lut[len - 1].map((idx) => scheme.colors[idx].hex);
   }
