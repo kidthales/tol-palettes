@@ -57,6 +57,7 @@ test('valid repository workflows pass Gate 0', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only'], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
   });
   const combined = (res.stdout || '') + (res.stderr || '');
   assert.equal(res.status, 0, `Expected Gate 0 to pass on repo workflows. Output: ${combined}`);
@@ -84,6 +85,7 @@ jobs:
       const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
         cwd: root,
         encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
       });
       assert.notEqual(res.status, 0, 'Expected non-zero exit status for unallowlisted step');
       const combined = (res.stdout || '') + (res.stderr || '');
@@ -116,6 +118,7 @@ jobs:
       const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-WorkflowsPath', fixtureDir], {
         cwd: root,
         encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
       });
       assert.notEqual(res.status, 0, 'Expected non-zero exit status for bad verify job');
       const combined = (res.stdout || '') + (res.stderr || '');
