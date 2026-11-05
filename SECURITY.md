@@ -4,6 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 0.3.x   | :white_check_mark: |
 | 0.2.x   | :white_check_mark: |
 | < 0.2.0 | :x:                |
 
@@ -69,7 +70,7 @@ For web assets loaded from CDNs (e.g. jsDelivr, unpkg), look up the precomputed 
 ```html
 <link
   rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.2.0/dist/css/tol.css"
+  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.0/dist/css/tol.css"
   integrity="sha384-..."
   crossorigin="anonymous"
 />
