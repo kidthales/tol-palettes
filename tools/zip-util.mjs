@@ -7,10 +7,25 @@ import { deflateRawSync, inflateRawSync, crc32 } from 'node:zlib';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Standard ZIP format constants.
+ *
+ * NOTE on DEFAULT_ZIP_MTIME:
+ * Standard MS-DOS FAT timestamps used in ZIP local and central directory headers only support
+ * dates between 1980-01-01 and 2107-12-31. The standard Unix epoch (1970-01-01T00:00:00Z) cannot
+ * be represented without non-standard ZIP extra fields. 2026-01-01T00:00:00Z provides a stable,
+ * deterministic baseline timestamp for reproducible builds.
+ */
 export const DEFAULT_ZIP_MTIME = new Date('2026-01-01T00:00:00Z');
 export const MAX_ZIP_ENTRIES = 128;
 export const MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;
 export const MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 25 * 1024 * 1024;
+
+export const EOCD_MAX_COMMENT_SEARCH = 65557; // 65535 max comment length + 22 bytes EOCD header
+export const ZIP_VERSION_MADE_BY_UNIX_2_0 = 0x0314; // UNIX 2.0
+export const ZIP_VERSION_NEEDED_2_0 = 20; // 2.0 (deflate)
+export const ZIP_EXTERNAL_ATTR_FILE_0644 = (0o100644 << 16) >>> 0; // -rw-r--r--
+export const ZIP_EXTERNAL_ATTR_DIR = 0x10; // directory
 
 export function resolveLastCommitDate(cwd = root) {
   try {
@@ -31,6 +46,12 @@ export function resolveLastCommitDate(cwd = root) {
   return null;
 }
 
+/**
+ * Resolves default zip mtime.
+ * Checks SOURCE_DATE_EPOCH environment variable first (standard reproducible builds specification).
+ * If unset, checks options or SOURCE_DATE_EPOCH_FALLBACK_GIT for git commit timestamp fallback.
+ * Otherwise returns DEFAULT_ZIP_MTIME.
+ */
 export function resolveDefaultZipMtime(opts = {}) {
   const rawEpoch = process.env.SOURCE_DATE_EPOCH;
   if (rawEpoch !== undefined && rawEpoch.trim() !== '') {
@@ -72,8 +93,33 @@ export function toDosDateTime(date, opts = {}) {
 }
 
 /**
+ * Validates zip entry path for directory traversal, drive jumps, or duplicate entries.
+ */
+function assertValidZipEntryPath(entryPath, seenNames = new Set()) {
+  if (typeof entryPath !== 'string' || entryPath.trim() === '') {
+    throw new Error('Invalid zip entry: path or name must be a non-empty string');
+  }
+  if (entryPath.includes('\0')) {
+    throw new Error(`Invalid zip entry "${entryPath}": path contains null bytes`);
+  }
+  const normalized = entryPath.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) {
+    throw new Error(`Invalid zip entry "${entryPath}": absolute paths or drive letters are forbidden`);
+  }
+  const segments = normalized.split('/');
+  if (segments.includes('..')) {
+    throw new Error(`Invalid zip entry "${entryPath}": path traversal ('..') is forbidden`);
+  }
+  if (seenNames.has(normalized)) {
+    throw new Error(`Invalid zip entry "${entryPath}": duplicate entry path in archive`);
+  }
+  seenNames.add(normalized);
+  return normalized;
+}
+
+/**
  * Builds a valid, standard ZIP archive buffer completely in-memory using Node.js standard libraries.
- * Produces deterministic archives with normalized DOS timestamps and UTF-8 path encoding.
+ * Produces deterministic archives with normalized DOS timestamps, UTF-8 path encoding, and byte-order sorting.
  *
  * @param {Array<{ path?: string, name?: string, data: Buffer | string, isDir?: boolean, mtime?: Date }>} entries
  * @param {object} [opts={}]
@@ -86,21 +132,20 @@ export function buildZip(entries, opts = {}) {
 
   const defaultMtime = opts?.mtime !== undefined ? opts.mtime : resolveDefaultZipMtime(opts);
 
-  // Sort entries for deterministic output
-  const sortedEntries = [...entries].sort((a, b) => {
-    const pathA = a.path ?? a.name ?? '';
-    const pathB = b.path ?? b.name ?? '';
-    return pathA.localeCompare(pathB);
+  // Validate and normalize all entry paths first
+  const seenNames = new Set();
+  const validatedEntries = entries.map((entry) => {
+    const rawPath = entry.path ?? entry.name;
+    const validatedPath = assertValidZipEntryPath(rawPath, seenNames);
+    return { ...entry, normalizedPath: validatedPath };
   });
 
-  for (const entry of sortedEntries) {
-    const entryPath = entry.path ?? entry.name;
-    if (typeof entryPath !== 'string' || entryPath.trim() === '') {
-      throw new Error('Invalid zip entry: path or name must be a non-empty string');
-    }
+  // Sort entries by UTF-16 code-unit order for reproducible output independent of locale
+  validatedEntries.sort((a, b) => (a.normalizedPath < b.normalizedPath ? -1 : a.normalizedPath > b.normalizedPath ? 1 : 0));
+
+  for (const entry of validatedEntries) {
     const isDir = Boolean(entry.isDir);
-    const normalizedPath = entryPath.replace(/\\/g, '/');
-    const pathBuf = Buffer.from(normalizedPath, 'utf8');
+    const pathBuf = Buffer.from(entry.normalizedPath, 'utf8');
     const dataBuf = isDir
       ? Buffer.alloc(0)
       : Buffer.isBuffer(entry.data)
@@ -118,7 +163,7 @@ export function buildZip(entries, opts = {}) {
     // Local file header (30 bytes + path length)
     const localHeader = Buffer.alloc(30 + pathBuf.length);
     localHeader.writeUInt32LE(0x04034b50, 0); // signature
-    localHeader.writeUInt16LE(20, 4); // version needed (2.0)
+    localHeader.writeUInt16LE(ZIP_VERSION_NEEDED_2_0, 4); // version needed (2.0)
     localHeader.writeUInt16LE(0x0800, 6); // general purpose bit flag (bit 11 = UTF-8)
     localHeader.writeUInt16LE(isDir ? 0 : 8, 8); // compression method (0 = store, 8 = deflate)
     localHeader.writeUInt16LE(dosTime, 10);
@@ -135,8 +180,8 @@ export function buildZip(entries, opts = {}) {
     // Central directory header (46 bytes + path length)
     const cdHeader = Buffer.alloc(46 + pathBuf.length);
     cdHeader.writeUInt32LE(0x02014b50, 0); // signature
-    cdHeader.writeUInt16LE(0x0314, 4); // version made by (UNIX 2.0)
-    cdHeader.writeUInt16LE(20, 6); // version needed
+    cdHeader.writeUInt16LE(ZIP_VERSION_MADE_BY_UNIX_2_0, 4); // version made by (UNIX 2.0)
+    cdHeader.writeUInt16LE(ZIP_VERSION_NEEDED_2_0, 6); // version needed
     cdHeader.writeUInt16LE(0x0800, 8); // general purpose bit flag
     cdHeader.writeUInt16LE(isDir ? 0 : 8, 10); // compression method
     cdHeader.writeUInt16LE(dosTime, 12);
@@ -149,7 +194,7 @@ export function buildZip(entries, opts = {}) {
     cdHeader.writeUInt16LE(0, 32); // comment len
     cdHeader.writeUInt16LE(0, 34); // disk start
     cdHeader.writeUInt16LE(0, 36); // internal file attributes
-    cdHeader.writeUInt32LE(isDir ? 0x10 : ((0o100644 << 16) >>> 0), 38); // external attributes
+    cdHeader.writeUInt32LE(isDir ? ZIP_EXTERNAL_ATTR_DIR : ZIP_EXTERNAL_ATTR_FILE_0644, 38); // external attributes
     cdHeader.writeUInt32LE(offset, 42); // relative offset of local header
     pathBuf.copy(cdHeader, 46);
 
@@ -166,8 +211,8 @@ export function buildZip(entries, opts = {}) {
   eocd.writeUInt32LE(0x06054b50, 0);
   eocd.writeUInt16LE(0, 4); // disk number
   eocd.writeUInt16LE(0, 6); // start disk
-  eocd.writeUInt16LE(sortedEntries.length, 8); // records on this disk
-  eocd.writeUInt16LE(sortedEntries.length, 10); // total records
+  eocd.writeUInt16LE(validatedEntries.length, 8); // records on this disk
+  eocd.writeUInt16LE(validatedEntries.length, 10); // total records
   eocd.writeUInt32LE(cdSize, 12);
   eocd.writeUInt32LE(cdOffset, 16);
   eocd.writeUInt16LE(0, 20); // comment length
@@ -186,7 +231,7 @@ export function parsePkZipEntries(zipBuf) {
     throw new Error('Invalid PKZip buffer: must be a Buffer of at least 22 bytes');
   }
   let eocdOffset = -1;
-  for (let i = zipBuf.length - 22; i >= Math.max(0, zipBuf.length - 65557); i--) {
+  for (let i = zipBuf.length - 22; i >= Math.max(0, zipBuf.length - EOCD_MAX_COMMENT_SEARCH); i--) {
     if (zipBuf.readUInt32LE(i) === 0x06054b50) {
       eocdOffset = i;
       break;
@@ -210,6 +255,7 @@ export function parsePkZipEntries(zipBuf) {
   }
 
   const entries = [];
+  const seenEntryNames = new Set();
   let pos = cdOffset;
   let totalUncompressedBytes = 0;
 
@@ -239,7 +285,9 @@ export function parsePkZipEntries(zipBuf) {
     if (pos + 46 + nameLen + extraLen + commentLen > eocdOffset) {
       throw new Error(`Central Directory variable fields at offset ${pos} exceed EOCD bounds`);
     }
-    const name = zipBuf.toString('utf8', pos + 46, pos + 46 + nameLen);
+    const rawName = zipBuf.toString('utf8', pos + 46, pos + 46 + nameLen);
+    const name = assertValidZipEntryPath(rawName, seenEntryNames);
+
     if (uncompressedSize > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES) {
       throw new Error(
         `Entry ${name} uncompressed size ${uncompressedSize} exceeds max allowed ${MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES} bytes`,

@@ -1,19 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from '../tools/validate.mjs';
 import {
   buildZip,
   parsePkZipEntries,
   resolveDefaultZipMtime,
-  toDosDateTime,
   DEFAULT_ZIP_MTIME,
   MAX_ZIP_ENTRIES,
-  MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES,
 } from '../tools/zip-util.mjs';
+import { packageAllAssets, generateSriManifest } from '../tools/package-assets.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const schemes = loadSchemes().map((x) => x.data);
@@ -33,11 +33,12 @@ test('dist/assets contains valid zip bundles for Godot, Aseprite, and GPL with L
   // 1. Verify Godot Zip
   const godotBuffer = readFileSync(godotZipPath);
   const godotEntries = parsePkZipEntries(godotBuffer);
-  // Expected: 22 .tres + 1 .gd + 1 plugin.cfg + LICENSE + NOTICE = 26 files
+  // Expected: schemes.length .tres + 1 .gd + 1 plugin.cfg + LICENSE + NOTICE
+  const expectedGodotCount = schemes.length + 4;
   assert.equal(
     godotEntries.length,
-    26,
-    'Godot zip must contain exactly 26 files (22 tres + 1 gd + plugin.cfg + LICENSE + NOTICE)',
+    expectedGodotCount,
+    `Godot zip must contain exactly ${expectedGodotCount} files (${schemes.length} tres + 1 gd + plugin.cfg + LICENSE + NOTICE)`,
   );
 
   const godotPaths = godotEntries.map((e) => e.path);
@@ -71,8 +72,9 @@ test('dist/assets contains valid zip bundles for Godot, Aseprite, and GPL with L
   // 2. Verify Aseprite Zip
   const aseBuffer = readFileSync(asepriteZipPath);
   const aseEntries = parsePkZipEntries(aseBuffer);
-  // Expected: 22 .gpl + LICENSE + NOTICE = 24 files
-  assert.equal(aseEntries.length, 24, 'Aseprite zip must contain 24 files (22 .gpl + LICENSE + NOTICE)');
+  // Expected: schemes.length .gpl + LICENSE + NOTICE
+  const expectedAseCount = schemes.length + 2;
+  assert.equal(aseEntries.length, expectedAseCount, `Aseprite zip must contain ${expectedAseCount} files (${schemes.length} .gpl + LICENSE + NOTICE)`);
   assert.ok(aseEntries.some((e) => e.path === 'LICENSE'), 'Aseprite zip must contain LICENSE');
   assert.ok(aseEntries.some((e) => e.path === 'NOTICE'), 'Aseprite zip must contain NOTICE');
   const aseLicense = aseEntries.find((e) => e.path === 'LICENSE');
@@ -90,8 +92,9 @@ test('dist/assets contains valid zip bundles for Godot, Aseprite, and GPL with L
   // 3. Verify GPL Zip
   const gplBuffer = readFileSync(gplZipPath);
   const gplEntries = parsePkZipEntries(gplBuffer);
-  // Expected: 22 .gpl + LICENSE + NOTICE = 24 files
-  assert.equal(gplEntries.length, 24, 'GPL zip must contain 24 files (22 .gpl + LICENSE + NOTICE)');
+  // Expected: schemes.length .gpl + LICENSE + NOTICE
+  const expectedGplCount = schemes.length + 2;
+  assert.equal(gplEntries.length, expectedGplCount, `GPL zip must contain ${expectedGplCount} files (${schemes.length} .gpl + LICENSE + NOTICE)`);
   assert.ok(gplEntries.some((e) => e.path === 'LICENSE'), 'GPL zip must contain LICENSE');
   assert.ok(gplEntries.some((e) => e.path === 'NOTICE'), 'GPL zip must contain NOTICE');
   const gplLicense = gplEntries.find((e) => e.path === 'LICENSE');
@@ -104,6 +107,59 @@ test('dist/assets contains valid zip bundles for Godot, Aseprite, and GPL with L
     assert.match(text, /GIMP Palette/);
     assert.match(text, /Paul Tol/);
     assert.ok(!text.includes('Aseprite-compatible'), 'Standard GPL must not have Aseprite comment line');
+  }
+});
+
+test('buildZip enforces entry name validation and rejects invalid paths', () => {
+  assert.throws(() => buildZip([{ path: '', data: 'x' }]), /must be a non-empty string/);
+  assert.throws(() => buildZip([{ path: '   ', data: 'x' }]), /must be a non-empty string/);
+  assert.throws(() => buildZip([{ path: 'foo\0bar.txt', data: 'x' }]), /contains null bytes/);
+  assert.throws(() => buildZip([{ path: '/absolute/path.txt', data: 'x' }]), /absolute paths or drive letters are forbidden/);
+  assert.throws(() => buildZip([{ path: 'C:/drive/path.txt', data: 'x' }]), /absolute paths or drive letters are forbidden/);
+  assert.throws(() => buildZip([{ path: 'D:\\drive\\path.txt', data: 'x' }]), /absolute paths or drive letters are forbidden/);
+  assert.throws(() => buildZip([{ path: 'foo/../bar.txt', data: 'x' }]), /path traversal/);
+  assert.throws(() => buildZip([{ path: '../escape.txt', data: 'x' }]), /path traversal/);
+  assert.throws(
+    () => buildZip([{ path: 'dup.txt', data: '1' }, { path: 'dup.txt', data: '2' }]),
+    /duplicate entry path in archive/,
+  );
+});
+
+test('buildZip is deterministic across entry order permutations', () => {
+  const entries1 = [
+    { path: 'c.txt', data: 'Three' },
+    { path: 'a.txt', data: 'One' },
+    { path: 'b.txt', data: 'Two' },
+    { path: 'nested/z.txt', data: 'Nested Z' },
+    { path: 'nested/a.txt', data: 'Nested A' },
+  ];
+  const entries2 = [
+    { path: 'nested/a.txt', data: 'Nested A' },
+    { path: 'b.txt', data: 'Two' },
+    { path: 'nested/z.txt', data: 'Nested Z' },
+    { path: 'c.txt', data: 'Three' },
+    { path: 'a.txt', data: 'One' },
+  ];
+
+  const fixedDate = new Date('2026-01-01T00:00:00Z');
+  const zip1 = buildZip(entries1, { mtime: fixedDate });
+  const zip2 = buildZip(entries2, { mtime: fixedDate });
+  assert.deepEqual(zip1, zip2, 'buildZip output must be byte-identical regardless of input entry order');
+});
+
+test('packageAllAssets and generateSriManifest fail closed when expected input files are missing', () => {
+  const tempOut = mkdtempSync(join(tmpdir(), 'tol-missing-test-'));
+  try {
+    assert.throws(
+      () => generateSriManifest(tempOut),
+      /Cannot generate SRI manifest: required dist directories/,
+    );
+    assert.throws(
+      () => packageAllAssets({ outDir: tempOut, allowedRoot: tmpdir() }),
+      /Required distribution directories not found/,
+    );
+  } finally {
+    rmSync(tempOut, { recursive: true, force: true });
   }
 });
 
@@ -203,7 +259,6 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
   // Verify SHA256SUMS.txt
   const sumsText = readFileSync(sumsPath, 'utf8');
   const lines = sumsText.trim().split(/\r?\n/);
-  assert.equal(lines.length, 10, 'SHA256SUMS.txt must cover exactly 10 release assets');
 
   const expectedAssets = [
     { name: 'LICENSE', file: join(root, 'LICENSE') },
@@ -217,6 +272,12 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
     { name: 'tol.css', file: join(root, 'dist', 'css', 'tol.css') },
     { name: 'tol_palettes.py', file: join(root, 'dist', 'py', 'tol_palettes.py') },
   ];
+
+  assert.equal(
+    lines.length,
+    expectedAssets.length,
+    `SHA256SUMS.txt must cover exactly ${expectedAssets.length} release assets`,
+  );
 
   for (const item of expectedAssets) {
     const line = lines.find((l) => l.endsWith(`  ${item.name}`));

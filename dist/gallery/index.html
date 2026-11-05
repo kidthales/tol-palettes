@@ -9,7 +9,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none';" />
     <title>Paul Tol Colour Schemes — Reference Gallery (Values Only)</title>
     <link rel="canonical" href="https://tol-palettes.kidthales.com/" />
     <meta name="description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
@@ -747,6 +747,8 @@
   --tol-ylorbr-gradient: linear-gradient(in srgb to right, #FFFFE5, #FFF7BC, #FEE391, #FEC44F, #FB9A29, #EC7014, #CC4C02, #993404, #662506);
 }
 
+    </style>
+    <style>
       :root {
         color-scheme: light dark;
         --bg: light-dark(#FFFFFF, var(--tol-bright-black));

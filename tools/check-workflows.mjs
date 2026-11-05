@@ -1,11 +1,14 @@
 // YAML AST Workflow Drift and Security Auditor for @kidthales/tol-palettes
 // Enforces structural permissions, commit SHA pinning, checkout hygiene,
-// script injection safety, Gate 0 single-source execution, and workflow contracts.
+// script injection safety, Gate 0 single-source execution, timeout-minutes bounds,
+// and workflow contracts.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+
+export const DEFAULT_MAX_TIMEOUT_MINUTES = 30;
 
 // Exact job-id/step-name allowlist pairs for non-verify steps
 export const EXACT_STEP_ALLOWLIST = new Set([
@@ -18,6 +21,7 @@ export const EXACT_STEP_ALLOWLIST = new Set([
   'tag-guard/Verify release tag matches project metadata versions',
   'verify/Install dependencies',
   'verify/Install Python build tools and matplotlib',
+  'verify/Install Python build tools and dependencies',
   'build/Install dependencies',
   'build/Generate static gallery',
   'build/generate:gallery',
@@ -32,6 +36,7 @@ export const EXACT_STEP_ALLOWLIST = new Set([
   'attach-assets/package:assets',
   'attach-assets/Package release asset bundles',
   'attach-assets/Upload zip bundles to GitHub Release',
+  'attach-assets/Upload release assets to GitHub Release',
 ]);
 
 // Canonical single-source CI invocation strings accepted without allowlisting
@@ -40,13 +45,6 @@ export const CANONICAL_CI_RUNS = new Set([
   'pwsh ./scripts/ci-local.ps1 -CI',
   'pwsh -File ./scripts/ci-local.ps1 -CI',
 ]);
-
-// Expected actions/checkout counts for known project workflows
-export const EXPECTED_CHECKOUT_COUNTS = {
-  'ci.yml': 2,
-  'pages.yml': 1,
-  'release.yml': 5,
-};
 
 // Forbidden direct test/lint/pack commands in run steps outside canonical CI
 export const FORBIDDEN_COMMAND_PATTERNS = [
@@ -58,13 +56,13 @@ export const FORBIDDEN_COMMAND_PATTERNS = [
 ];
 
 /**
- * Checks whether a string contains an unescaped ${{ ... }} expression.
- * Returns true if an unescaped ${{ is detected, false if escaped with backslash.
+ * Checks whether a string contains any ${{ ... }} expression.
+ * In GitHub Actions, expressions are expanded before invocation and backslash escaping
+ * does not prevent evaluation. Any expression in a shell script block is flagged.
  */
 export function hasUnescapedExpression(str) {
   if (typeof str !== 'string') return false;
-  // Match ${{ ... }} that is not preceded by an odd number of backslashes
-  return /(^|[^\\])(?:\\\\)*\$\{\{[\s\S]*?\}\}/.test(str);
+  return /\$\{\{[\s\S]*?\}\}/.test(str);
 }
 
 /**
@@ -79,13 +77,18 @@ function isAuthorizedJobWrite(fileName, jobId, scope) {
     return base === 'pages.yml' && jobId === 'deploy';
   }
   if (scope === 'id-token') {
-    return (base === 'pages.yml' && jobId === 'deploy') ||
-      (base === 'release.yml' && (jobId === 'publish-npm' || jobId === 'publish-pypi'));
+    return (
+      (base === 'pages.yml' && jobId === 'deploy') ||
+      (base === 'release.yml' && (jobId === 'publish-npm' || jobId === 'publish-pypi' || jobId === 'attach-assets'))
+    );
   }
   if (scope === 'packages') {
     return base === 'release.yml' && jobId === 'publish-gpr';
   }
   if (scope === 'contents') {
+    return base === 'release.yml' && jobId === 'attach-assets';
+  }
+  if (scope === 'attestations') {
     return base === 'release.yml' && jobId === 'attach-assets';
   }
   return false;
@@ -97,6 +100,7 @@ function isAuthorizedJobWrite(fileName, jobId, scope) {
  */
 export function auditWorkflows(targetPath, options = {}) {
   const violations = [];
+  const maxTimeout = options.maxTimeoutMinutes || DEFAULT_MAX_TIMEOUT_MINUTES;
 
   let workflowsDir = options.workflowsDir || targetPath;
   if (!workflowsDir) {
@@ -170,7 +174,6 @@ export function auditWorkflows(targetPath, options = {}) {
     }
 
     const jobs = doc.jobs && typeof doc.jobs === 'object' ? doc.jobs : {};
-    let checkoutCount = 0;
 
     for (const [jobId, job] of Object.entries(jobs)) {
       if (!job || typeof job !== 'object') {
@@ -178,9 +181,23 @@ export function auditWorkflows(targetPath, options = {}) {
         continue;
       }
 
-      // 2. Job permissions check (zero unauthorized write permissions)
-      if (job.permissions) {
-        if (typeof job.permissions === 'string') {
+      const hasSteps = Array.isArray(job.steps) && job.steps.length > 0;
+
+      // 2. Timeout-minutes enforcement on every job that runs steps
+      if (hasSteps || (!job.uses && !job.strategy?.matrix)) {
+        const timeout = job['timeout-minutes'];
+        if (timeout === undefined || timeout === null) {
+          violations.push(`${wfName}: job '${jobId}' missing 'timeout-minutes' (must be positive integer <= ${maxTimeout})`);
+        } else if (!Number.isInteger(timeout) || timeout < 1 || timeout > maxTimeout) {
+          violations.push(`${wfName}: job '${jobId}' has invalid 'timeout-minutes' (${timeout}), must be positive integer <= ${maxTimeout}`);
+        }
+      }
+
+      // 3. Job permissions check (must be explicitly declared, zero unauthorized write permissions)
+      if (hasSteps) {
+        if (!job.permissions) {
+          violations.push(`${wfName}: job '${jobId}' missing explicit job-level permissions block`);
+        } else if (typeof job.permissions === 'string') {
           if (job.permissions === 'write-all') {
             violations.push(`${wfName}: job '${jobId}' has unauthorized write-all permissions`);
           }
@@ -196,13 +213,17 @@ export function auditWorkflows(targetPath, options = {}) {
       // Job-level reusable workflow call check
       if (job.uses) {
         const u = String(job.uses);
-        if (u.startsWith('./') || u.startsWith('$/')) {
+        if (u.startsWith('./')) {
           if (u.includes('..') || u.includes('\\')) {
             violations.push(`${wfName}: job '${jobId}' uses non-canonical workflow path '${u}'`);
           }
         } else if (u.startsWith('../')) {
-          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with './' or '$/')`);
-        } else if (!u.startsWith('docker://')) {
+          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with './')`);
+        } else if (u.startsWith('docker://')) {
+          if (!/@sha256:[0-9a-fA-F]{64}$/.test(u)) {
+            violations.push(`${wfName}: job '${jobId}' uses unpinned docker action '${u}' (must pin to @sha256 digest)`);
+          }
+        } else {
           const atIdx = u.lastIndexOf('@');
           const sha = atIdx !== -1 ? u.slice(atIdx + 1).trim() : '';
           if (!/^[0-9a-fA-F]{40}$/.test(sha)) {
@@ -218,16 +239,20 @@ export function auditWorkflows(targetPath, options = {}) {
         if (!step || typeof step !== 'object') continue;
         const stepName = step.name || 'unnamed';
 
-        // 3. Action uses pinning and canonical path checks
+        // 4. Action uses pinning and canonical path checks
         if (step.uses) {
           const uses = String(step.uses);
-          if (uses.startsWith('./') || uses.startsWith('$/')) {
+          if (uses.startsWith('./')) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
             }
           } else if (uses.startsWith('../')) {
-            violations.push(`${wfName}: step '${stepName}' uses non-canonical relative path '${uses}' (must start with './' or '$/')`);
-          } else if (!uses.startsWith('docker://')) {
+            violations.push(`${wfName}: step '${stepName}' uses non-canonical relative path '${uses}' (must start with './')`);
+          } else if (uses.startsWith('docker://')) {
+            if (!/@sha256:[0-9a-fA-F]{64}$/.test(uses)) {
+              violations.push(`${wfName}: step '${stepName}' uses unpinned docker action '${uses}' (must pin to @sha256 digest)`);
+            }
+          } else {
             const atIdx = uses.lastIndexOf('@');
             const sha = atIdx !== -1 ? uses.slice(atIdx + 1).trim() : '';
             if (!/^[0-9a-fA-F]{40}$/.test(sha)) {
@@ -235,16 +260,15 @@ export function auditWorkflows(targetPath, options = {}) {
             }
           }
 
-          // 4. actions/checkout persist-credentials check
+          // 5. actions/checkout persist-credentials check
           if (uses.startsWith('actions/checkout@')) {
-            checkoutCount++;
             if (!step.with || step.with['persist-credentials'] !== false) {
               violations.push(`${wfName}: step '${stepName}' uses actions/checkout without persist-credentials: false`);
             }
           }
         }
 
-        // 5. Script execution checks
+        // 6. Script execution checks
         if (step.run !== undefined) {
           const rawRun = String(step.run).trim();
 
@@ -273,6 +297,13 @@ export function auditWorkflows(targetPath, options = {}) {
             violations.push(`${wfName}: job '${jobId}' step '${stepName}' runs inline script ('${rawRun}') instead of './scripts/ci-local.ps1 -CI' and pair '${pairKey}' is not in the Gate 0 exact allowlist.`);
           }
         }
+
+        // Script block in action inputs (e.g. actions/github-script)
+        if (step.with && typeof step.with === 'object' && step.with.script) {
+          if (hasUnescapedExpression(String(step.with.script))) {
+            violations.push(`${wfName}: job '${jobId}' step '${stepName}' contains expression interpolation in action script input`);
+          }
+        }
       }
 
       // Verify job canonical CI runner contract
@@ -282,13 +313,6 @@ export function auditWorkflows(targetPath, options = {}) {
         } else if (steps.length === 0 && job.uses !== './.github/workflows/ci.yml') {
           violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call './.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
         }
-      }
-    }
-
-    // 6. Expected checkout count check on known workflows
-    if (EXPECTED_CHECKOUT_COUNTS[wfName] !== undefined) {
-      if (checkoutCount !== EXPECTED_CHECKOUT_COUNTS[wfName]) {
-        violations.push(`${wfName}: expected ${EXPECTED_CHECKOUT_COUNTS[wfName]} actions/checkout step(s), found ${checkoutCount}`);
       }
     }
 
@@ -384,6 +408,15 @@ export function auditWorkflows(targetPath, options = {}) {
               violations.push(`${wfName}: job '${jobId}' step '${step.name || 'setup-node'}' must set package-manager-cache: false`);
             }
           }
+        }
+      }
+
+      // release.yml: provenance attestation in attach-assets
+      if (jobs['attach-assets']) {
+        const aaSteps = Array.isArray(jobs['attach-assets'].steps) ? jobs['attach-assets'].steps : [];
+        const hasAttestation = aaSteps.some((s) => s.uses && s.uses.includes('actions/attest-build-provenance'));
+        if (!hasAttestation) {
+          violations.push(`${wfName}: attach-assets job missing actions/attest-build-provenance step`);
         }
       }
     }

@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify and publish (e.g. v0.2.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +21,7 @@ jobs:
   tag-guard:
     name: Verify Release Tag & Version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -33,9 +39,10 @@ jobs:
       - name: Verify release tag matches project metadata versions
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG="${RELEASE_TAG:-$REF_NAME}"
+          TAG="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           if [ -z "$TAG" ]; then
             echo "::error::No release tag or ref name found."
             exit 1
@@ -80,6 +87,7 @@ jobs:
     name: Publish to npm Public Registry
     needs: [verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -117,6 +125,7 @@ jobs:
     name: Publish to GitHub Packages
     needs: [verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -155,6 +164,7 @@ jobs:
     name: Publish to PyPI
     needs: [verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
@@ -188,8 +198,11 @@ jobs:
     needs: [verify]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 15
     permissions:
       contents: write
+      attestations: write
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,24 +223,44 @@ jobs:
           npm run generate:game
           npm run package:assets
 
-      - name: Upload zip bundles to GitHub Release
+      - name: Upload release assets to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG_NAME="${RELEASE_TAG:-$REF_NAME}"
+          TAG_NAME="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           gh release upload "$TAG_NAME" \
             dist/assets/tol-palettes-godot.zip \
             dist/assets/tol-palettes-aseprite.zip \
             dist/assets/tol-palettes-gpl.zip \
+            dist/SHA256SUMS.txt \
+            dist/manifest.json \
+            dist/sri.json \
+            dist/css/tol.css \
+            dist/js/index.js \
+            dist/json/schemes.json \
+            dist/py/tol_palettes.py \
+            LICENSE \
+            NOTICE \
             --clobber
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@c074443f1a5fb4aeeae55b9c44569595d2c206d2 # v2.2.3
+        with:
+          subject-path: |
+            dist/assets/*.zip
+            dist/SHA256SUMS.txt
+            dist/manifest.json
+            dist/sri.json
 
   notify:
     name: Discord Release Notification
     needs: [tag-guard, verify, publish-npm, publish-gpr, publish-pypi, attach-assets]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     env:

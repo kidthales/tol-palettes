@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { assertValidMtimeOption, resolveOutDir } from './path-jail.mjs';
+import { assertValidMtimeOption, parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { buildZip, collectDirectoryEntries, resolveDefaultZipMtime } from './zip-util.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,10 +41,6 @@ export interface SriManifest {
   readonly files: Readonly<Record<string, SriFileEntry>>;
 }
 
-export declare const pkg: string;
-export declare const version: string;
-export declare const files: Readonly<Record<string, SriFileEntry>>;
-
 declare const manifest: SriManifest;
 export default manifest;
 `;
@@ -65,50 +61,60 @@ export function generateSriManifest(targetDist = join(root, 'dist')) {
   const jsDir = join(targetDist, 'js');
   const jsonDir = join(targetDist, 'json');
 
+  if (!existsSync(cssDir) || !existsSync(jsDir) || !existsSync(jsonDir)) {
+    throw new Error(
+      `Cannot generate SRI manifest: required dist directories (css, js, json) not found in ${targetDist}. Run generate:css and generate:js first.`,
+    );
+  }
+
   const filesMap = {};
 
-  if (existsSync(cssDir)) {
-    const cssFiles = readdirSync(cssDir).filter((f) => f.endsWith('.css')).sort();
-    for (const file of cssFiles) {
-      const fullPath = join(cssDir, file);
-      const buf = readFileSync(fullPath);
-      filesMap[`dist/css/${file}`] = {
-        bytes: buf.length,
-        gzipBytes: gzipSync(buf).length,
-        integrity: sha384(buf),
-      };
-    }
+  const cssFiles = readdirSync(cssDir)
+    .filter((f) => f.endsWith('.css'))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+  if (cssFiles.length === 0) {
+    throw new Error(`Cannot generate SRI manifest: no CSS files found in ${cssDir}`);
   }
 
-  if (existsSync(jsDir)) {
-    const jsFiles = ['index.js', 'index.d.ts'];
-    for (const file of jsFiles) {
-      const fullPath = join(jsDir, file);
-      if (existsSync(fullPath)) {
-        const buf = readFileSync(fullPath);
-        filesMap[`dist/js/${file}`] = {
-          bytes: buf.length,
-          gzipBytes: gzipSync(buf).length,
-          integrity: sha384(buf),
-        };
-      }
-    }
+  for (const file of cssFiles) {
+    const fullPath = join(cssDir, file);
+    const buf = readFileSync(fullPath);
+    filesMap[`dist/css/${file}`] = {
+      bytes: buf.length,
+      gzipBytes: gzipSync(buf, { level: 9 }).length,
+      integrity: sha384(buf),
+    };
   }
 
-  if (existsSync(jsonDir)) {
-    const jsonPath = join(jsonDir, 'schemes.json');
-    if (existsSync(jsonPath)) {
-      const buf = readFileSync(jsonPath);
-      filesMap['dist/json/schemes.json'] = {
-        bytes: buf.length,
-        gzipBytes: gzipSync(buf).length,
-        integrity: sha384(buf),
-      };
+  const jsFiles = ['index.js', 'index.d.ts'];
+  for (const file of jsFiles) {
+    const fullPath = join(jsDir, file);
+    if (!existsSync(fullPath)) {
+      throw new Error(`Cannot generate SRI manifest: required JS file not found at ${fullPath}`);
     }
+    const buf = readFileSync(fullPath);
+    filesMap[`dist/js/${file}`] = {
+      bytes: buf.length,
+      gzipBytes: gzipSync(buf, { level: 9 }).length,
+      integrity: sha384(buf),
+    };
   }
 
+  const jsonPath = join(jsonDir, 'schemes.json');
+  if (!existsSync(jsonPath)) {
+    throw new Error(`Cannot generate SRI manifest: required JSON file not found at ${jsonPath}`);
+  }
+  const jsonBuf = readFileSync(jsonPath);
+  filesMap['dist/json/schemes.json'] = {
+    bytes: jsonBuf.length,
+    gzipBytes: gzipSync(jsonBuf, { level: 9 }).length,
+    integrity: sha384(jsonBuf),
+  };
+
+  const sortedKeys = Object.keys(filesMap).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const sortedFiles = {};
-  for (const k of Object.keys(filesMap).sort()) {
+  for (const k of sortedKeys) {
     sortedFiles[k] = filesMap[k];
   }
 
@@ -138,8 +144,26 @@ export function packageAllAssets(opts = {}) {
     throw new Error('Required LICENSE or NOTICE file not found in repository root.');
   }
 
+  // Verify standalone distribution asset files exist before packaging manifests
+  const schemesJsonPath = join(targetDist, 'json', 'schemes.json');
+  const tolCssPath = join(targetDist, 'css', 'tol.css');
+  const tolPyPath = join(targetDist, 'py', 'tol_palettes.py');
+
+  if (!existsSync(schemesJsonPath)) {
+    throw new Error(`Required asset not found: ${schemesJsonPath}. Run npm run generate:js first.`);
+  }
+  if (!existsSync(tolCssPath)) {
+    throw new Error(`Required asset not found: ${tolCssPath}. Run npm run generate:css first.`);
+  }
+  if (!existsSync(tolPyPath)) {
+    throw new Error(`Required asset not found: ${tolPyPath}. Run npm run generate:py first.`);
+  }
+
   const licenseBuf = readFileSync(licensePath);
   const noticeBuf = readFileSync(noticePath);
+  const schemesJsonBuf = readFileSync(schemesJsonPath);
+  const tolCssBuf = readFileSync(tolCssPath);
+  const tolPyBuf = readFileSync(tolPyPath);
 
   // 1. Godot addon zip (interior root: addons/tol_palettes/...)
   const godotEntries = collectDirectoryEntries(godotAddonDir, 'addons/tol_palettes', { mtime: effectiveMtime });
@@ -195,21 +219,17 @@ export function packageAllAssets(opts = {}) {
   writeFileSync(join(targetDist, 'sri.d.ts'), generateSriDts(), 'utf8');
 
   // 5. Generate dist/manifest.json
-  const schemesJsonPath = join(targetDist, 'json', 'schemes.json');
-  const tolCssPath = join(targetDist, 'css', 'tol.css');
-  const tolPyPath = join(targetDist, 'py', 'tol_palettes.py');
-
   const artifactSources = [
-    { name: 'schemes.json', buf: existsSync(schemesJsonPath) ? readFileSync(schemesJsonPath) : null },
+    { name: 'schemes.json', buf: schemesJsonBuf },
     { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },
     { name: 'tol-palettes-aseprite.zip', buf: asepriteZip },
     { name: 'tol-palettes-godot.zip', buf: godotZip },
     { name: 'tol-palettes-gpl.zip', buf: gplZip },
-    { name: 'tol.css', buf: existsSync(tolCssPath) ? readFileSync(tolCssPath) : null },
-    { name: 'tol_palettes.py', buf: existsSync(tolPyPath) ? readFileSync(tolPyPath) : null },
-  ].filter((a) => a.buf !== null);
+    { name: 'tol.css', buf: tolCssBuf },
+    { name: 'tol_palettes.py', buf: tolPyBuf },
+  ];
 
-  artifactSources.sort((a, b) => a.name.localeCompare(b.name));
+  artifactSources.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   const artifacts = {};
   for (const item of artifactSources) {
@@ -228,21 +248,21 @@ export function packageAllAssets(opts = {}) {
   writeFileSync(join(targetDist, 'manifest.json'), manifestJson, 'utf8');
 
   // 6. Generate dist/SHA256SUMS.txt
-  // Covering all uploaded release assets:
+  // Covering all release assets uploaded to GitHub Release and CDN:
   // tol-palettes-{godot,aseprite,gpl}.zip, schemes.json, tol.css, tol_palettes.py, LICENSE, NOTICE, manifest.json, sri.json
   const releaseAssets = [
     { name: 'LICENSE', buf: licenseBuf },
     { name: 'NOTICE', buf: noticeBuf },
     { name: 'manifest.json', buf: Buffer.from(manifestJson, 'utf8') },
-    { name: 'schemes.json', buf: existsSync(schemesJsonPath) ? readFileSync(schemesJsonPath) : Buffer.alloc(0) },
+    { name: 'schemes.json', buf: schemesJsonBuf },
     { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },
     { name: 'tol-palettes-aseprite.zip', buf: asepriteZip },
     { name: 'tol-palettes-godot.zip', buf: godotZip },
     { name: 'tol-palettes-gpl.zip', buf: gplZip },
-    { name: 'tol.css', buf: existsSync(tolCssPath) ? readFileSync(tolCssPath) : Buffer.alloc(0) },
-    { name: 'tol_palettes.py', buf: existsSync(tolPyPath) ? readFileSync(tolPyPath) : Buffer.alloc(0) },
+    { name: 'tol.css', buf: tolCssBuf },
+    { name: 'tol_palettes.py', buf: tolPyBuf },
   ];
-  releaseAssets.sort((a, b) => a.name.localeCompare(b.name));
+  releaseAssets.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   const sha256Sums = releaseAssets.map((f) => `${sha256Hex(f.buf)}  ${f.name}`).join('\n') + '\n';
   writeFileSync(join(targetDist, 'SHA256SUMS.txt'), sha256Sums, 'utf8');
@@ -258,17 +278,6 @@ export function packageAllAssets(opts = {}) {
 }
 
 export const packageAssets = packageAllAssets;
-
-function parseCliOutDir(argv = process.argv.slice(2)) {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
-      return argv[i + 1];
-    }
-    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
-    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
-  }
-  return undefined;
-}
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const cliOutDir = parseCliOutDir();

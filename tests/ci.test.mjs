@@ -7,7 +7,15 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
-import { resolveOutDir, resolveRealPath, stripWin32DeviceNamespacePrefix, isSameOrSubpath, assertValidMtimeOption, assertSafeCustomSyncTarget } from '../tools/path-jail.mjs';
+import {
+  resolveOutDir,
+  resolveRealPath,
+  stripWin32DeviceNamespacePrefix,
+  isSameOrSubpath,
+  assertValidMtimeOption,
+  assertSafeWriteTarget,
+  parseCliOutDir,
+} from '../tools/path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = join(root, 'scripts', 'ci-local.ps1');
@@ -59,9 +67,14 @@ test('fixture workflow with un-allowlisted inline step fails Gate 0', () => {
   withTempFixture(
     {
       'unauthorized.yml': `name: Unauthorized
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Unauthorized inline run
         run: echo "rogue step"
@@ -86,9 +99,14 @@ test('fixture verify job with non-canonical runner fails Gate 0', () => {
   withTempFixture(
     {
       'bad_verify.yml': `name: BadVerify
+permissions:
+  contents: read
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Invalid CI runner
         run: ./custom-runner.sh
@@ -190,14 +208,15 @@ test('ci-local.ps1 auto-enables $CI when $env:GITHUB_ACTIONS is set', () => {
 // Unit tests: hasUnescapedExpression
 // ---------------------------------------------------------------------------
 
-test('hasUnescapedExpression correctly detects unescaped expressions', () => {
+test('hasUnescapedExpression rejects direct and backslash-escaped expressions', () => {
   assert.equal(hasUnescapedExpression('echo ${{ github.sha }}'), true);
+  assert.equal(hasUnescapedExpression('echo \\${{ github.sha }}'), true);
+  assert.equal(hasUnescapedExpression('echo \\\\${{ github.sha }}'), true);
   assert.equal(hasUnescapedExpression('${{ inputs.name }}'), true);
   assert.equal(hasUnescapedExpression('run: | \n  echo "${{ github.event_name }}"'), true);
 });
 
-test('hasUnescapedExpression allows escaped expressions and plain strings', () => {
-  assert.equal(hasUnescapedExpression('echo \\${{ github.sha }}'), false);
+test('hasUnescapedExpression accepts plain strings and environment variables without expressions', () => {
   assert.equal(hasUnescapedExpression('echo "$JOB_STATUS"'), false);
   assert.equal(hasUnescapedExpression('./scripts/ci-local.ps1 -CI'), false);
   assert.equal(hasUnescapedExpression(''), false);
@@ -223,6 +242,9 @@ test('auditWorkflows fails when top-level permissions block is missing or invali
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Install dependencies
         run: ./scripts/ci-local.ps1 -CI
@@ -243,6 +265,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Install dependencies
         run: ./scripts/ci-local.ps1 -CI
@@ -265,6 +290,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -289,6 +315,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -311,6 +340,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Local
         uses: ../local-action
@@ -333,6 +365,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -357,6 +392,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Install dependencies
         run: echo "branch is \${{ github.ref }}"
@@ -377,6 +415,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Install dependencies
         run: npm test
@@ -386,6 +427,99 @@ jobs:
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes('runs forbidden direct test/lint/pack command')));
+    },
+  );
+});
+
+test('auditWorkflows enforces timeout-minutes and job-level permissions on jobs with steps', () => {
+  withTempFixture(
+    {
+      'missing_timeout.yml': `name: MissingTimeout
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("missing 'timeout-minutes'")));
+    },
+  );
+
+  withTempFixture(
+    {
+      'excessive_timeout.yml': `name: ExcessiveTimeout
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 999
+    permissions:
+      contents: read
+    steps:
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("has invalid 'timeout-minutes'")));
+    },
+  );
+
+  withTempFixture(
+    {
+      'missing_job_perms.yml': `name: MissingJobPerms
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run CI
+        run: ./scripts/ci-local.ps1 -CI
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('missing explicit job-level permissions block')));
+    },
+  );
+});
+
+test('auditWorkflows rejects unpinned docker action', () => {
+  withTempFixture(
+    {
+      'docker_unpinned.yml': `name: DockerUnpinned
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Run docker action
+        uses: docker://alpine:latest
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes('uses unpinned docker action')));
     },
   );
 });
@@ -400,6 +534,10 @@ permissions:
 jobs:
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -408,6 +546,9 @@ jobs:
       - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -417,6 +558,9 @@ jobs:
   notify:
     if: always() && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - name: Dispatch consolidated status card to
         run: echo done
@@ -441,6 +585,9 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -469,6 +616,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -497,6 +647,9 @@ concurrency:
 jobs:
   tag-guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -533,15 +686,42 @@ test('path-jail: resolveOutDir enforces repository jail and rejects protected pa
   assert.throws(() => resolveOutDir({ outDir: join(root, 'schema') }), /refusing to write to protected path/);
   assert.throws(() => resolveOutDir({ outDir: join(root, 'tools') }), /refusing to write to protected path/);
   assert.throws(() => resolveOutDir({ outDir: join(root, 'tests') }), /refusing to write to protected path/);
-  assert.throws(() => resolveOutDir({ outDir: join(root, '..foo') }), /refusing to write to protected path/);
-  assert.throws(() => resolveOutDir({ outDir: join(root, 'dist..foo') }), /refusing to write to protected path/);
-  assert.throws(() => resolveOutDir({ outDir: dirname(root) }), /refusing to write to protected path/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, '..foo') }), /refusing to write outside allowed jail boundary/);
+  assert.throws(() => resolveOutDir({ outDir: join(root, 'dist..foo') }), /refusing to write outside allowed jail boundary/);
+  assert.throws(() => resolveOutDir({ outDir: dirname(root) }), /refusing to write outside allowed jail boundary/);
 
   // Allowed targets
   const defaultDist = resolveOutDir();
-  assert.equal(defaultDist, join(root, 'dist'));
+  assert.equal(defaultDist, resolveRealPath(join(root, 'dist')));
+
+  // Rejects out-of-boundary paths when allowedRoot defaults to repo root
+  assert.throws(() => resolveOutDir({ outDir: tmpdir() }), /refusing to write outside allowed jail boundary/);
+
+  // Accepts outDir when explicitly within allowedRoot
   const tempTarget = join(tmpdir(), 'tol_test_dist');
-  assert.equal(resolveOutDir({ outDir: tempTarget }), resolveRealPath(tempTarget));
+  assert.equal(resolveOutDir({ outDir: tempTarget, allowedRoot: tmpdir() }), resolveRealPath(tempTarget));
+});
+
+test('path-jail: assertSafeWriteTarget verifies targets within boundary', () => {
+  assert.throws(() => assertSafeWriteTarget(''), /Invalid targetPath/);
+  assert.throws(() => assertSafeWriteTarget(tmpdir()), /refusing to write outside allowed jail boundary/);
+  const safe = join(root, 'dist', 'test.txt');
+  assert.equal(assertSafeWriteTarget(safe), resolveRealPath(safe));
+});
+
+test('path-jail: parseCliOutDir parses flags and fails closed on invalid input', () => {
+  assert.equal(parseCliOutDir([]), undefined);
+  assert.equal(parseCliOutDir(['--other', 'val']), undefined);
+  assert.equal(parseCliOutDir(['--outDir', 'custom_dist']), 'custom_dist');
+  assert.equal(parseCliOutDir(['--outdir', 'custom_dist2']), 'custom_dist2');
+  assert.equal(parseCliOutDir(['--outDir=custom_dist3']), 'custom_dist3');
+  assert.equal(parseCliOutDir(['--outdir=custom_dist4']), 'custom_dist4');
+
+  assert.throws(() => parseCliOutDir(['--outDir']), /missing or empty directory argument/);
+  assert.throws(() => parseCliOutDir(['--outdir', '   ']), /missing or empty directory argument/);
+  assert.throws(() => parseCliOutDir(['--outDir', '--other']), /missing or empty directory argument/);
+  assert.throws(() => parseCliOutDir(['--outDir=']), /value cannot be empty/);
+  assert.throws(() => parseCliOutDir(['--outdir=']), /value cannot be empty/);
 });
 
 test('path-jail: assertValidMtimeOption accepts Date and rejects non-Date', () => {

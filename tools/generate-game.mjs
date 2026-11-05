@@ -10,7 +10,7 @@ import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-import { resolveOutDir } from './path-jail.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -82,7 +82,7 @@ script=""
 }
 
 export function generateGodotScript(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const header = COMMENT_LINES.map((l) => `# ${l}`).join('\n');
 
   const namedConsts = [];
@@ -189,7 +189,7 @@ static func get_discrete_rainbow_bad(n: int) -> Color:
 }
 
 export function generateAllGame(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const gplFiles = new Map();
   const aseFiles = new Map();
   const godotFiles = new Map();
@@ -226,17 +226,6 @@ export function generateGame(opts = {}) {
   // Also write plugin.cfg into the addon directory
   writeFileSync(join(addonDir, 'plugin.cfg'), generateGodotPluginCfg());
   return { gplDir, aseDir, godotDir, addonDir };
-}
-
-function parseCliOutDir(argv = process.argv.slice(2)) {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
-      return argv[i + 1];
-    }
-    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
-    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
-  }
-  return undefined;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

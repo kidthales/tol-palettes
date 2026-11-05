@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-import { resolveOutDir } from './path-jail.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 
 const HEADER = `/*
  * Colour values from Paul Tol's colour schemes (https://sronpersonalpages.nl/~pault/),
@@ -47,7 +47,7 @@ export function cssFor(s) {
 }
 
 export function generateAll(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const files = new Map();
   for (const s of sorted) files.set(`${s.id}.css`, HEADER + '\n' + cssFor(s));
   files.set('tol.css', HEADER + '\n' + sorted.map(cssFor).join('\n'));
@@ -62,17 +62,6 @@ export function generateCss(opts = {}) {
   const files = generateAll();
   for (const [name, text] of files) writeFileSync(join(dir, name), text);
   return { dir, count: files.size };
-}
-
-function parseCliOutDir(argv = process.argv.slice(2)) {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
-      return argv[i + 1];
-    }
-    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
-    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
-  }
-  return undefined;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

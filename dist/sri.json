@@ -84,7 +84,7 @@
     },
     "dist/css/rainbow-discrete.css": {
       "bytes": 12873,
-      "gzipBytes": 1673,
+      "gzipBytes": 1671,
       "integrity": "sha384-JFX4cuDcrH2YpId2dzXHGLyePQvowv8WI1PmsxO23N+fAL2ASQiWA5+ZBmY7Rey3"
     },
     "dist/css/rainbow-smooth.css": {
@@ -99,7 +99,7 @@
     },
     "dist/css/tol.css": {
       "bytes": 25385,
-      "gzipBytes": 4713,
+      "gzipBytes": 4681,
       "integrity": "sha384-3g0jAZKNIK2KxgHMBn+Qo9PTuGPS6fX4yKZFuIzuy3MEAzYQmiuGIB4EUFNkZaMb"
     },
     "dist/css/vibrant.css": {
@@ -119,17 +119,17 @@
     },
     "dist/js/index.d.ts": {
       "bytes": 3626,
-      "gzipBytes": 1042,
+      "gzipBytes": 1041,
       "integrity": "sha384-aS9dLFtMXlX4Nqgkl7AaJ0l5zxXDNm2dHEC9AwR7NZUdVZJbS0KO7gulIQlPpk/z"
     },
     "dist/js/index.js": {
-      "bytes": 29558,
-      "gzipBytes": 5184,
-      "integrity": "sha384-VLvyhFLNkgC9TSG3Nao+EHAYpWF6xs5U0MS9q4uzFd+oDxwLT7l6/J3Qe0DYSPuk"
+      "bytes": 29591,
+      "gzipBytes": 5134,
+      "integrity": "sha384-5i9f4enhaTOehU9xGv5224joV4duOt/iYzzsupaIhQU6UETDiW6jxNygVqVtTSqR"
     },
     "dist/json/schemes.json": {
       "bytes": 29456,
-      "gzipBytes": 3228,
+      "gzipBytes": 3144,
       "integrity": "sha384-MYxJ4ZLhgJQkNqttvOYOSmoLdHesEThnuC30bMlZABCs2lRXnxoc26fBWeZtC0sw"
     }
   }

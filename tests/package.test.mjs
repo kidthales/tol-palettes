@@ -123,8 +123,20 @@ test('release.yml workflow enforces tag-guard parity and uploads valid asset pat
     assert.ok(existsSync(join(root, assetPath)), `Uploaded asset path does not exist on disk: ${assetPath}`);
   }
 
-  // Ensure primary zip bundles are covered
+  // Ensure primary zip bundles and release manifests are covered
   assert.ok(lines.includes('dist/assets/tol-palettes-godot.zip'));
   assert.ok(lines.includes('dist/assets/tol-palettes-aseprite.zip'));
   assert.ok(lines.includes('dist/assets/tol-palettes-gpl.zip'));
+  assert.ok(lines.includes('dist/SHA256SUMS.txt'), 'Must upload dist/SHA256SUMS.txt');
+  assert.ok(lines.includes('dist/manifest.json'), 'Must upload dist/manifest.json');
+  assert.ok(lines.includes('dist/sri.json'), 'Must upload dist/sri.json');
+  assert.ok(lines.includes('dist/css/tol.css'), 'Must upload dist/css/tol.css');
+  assert.ok(lines.includes('dist/js/index.js'), 'Must upload dist/js/index.js');
+  assert.ok(lines.includes('dist/json/schemes.json'), 'Must upload dist/json/schemes.json');
+  assert.ok(lines.includes('dist/py/tol_palettes.py'), 'Must upload dist/py/tol_palettes.py');
+  assert.ok(lines.includes('LICENSE'), 'Must upload LICENSE');
+  assert.ok(lines.includes('NOTICE'), 'Must upload NOTICE');
+
+  // Ensure build provenance attestation is present
+  assert.match(releaseYml, /actions\/attest-build-provenance/);
 });

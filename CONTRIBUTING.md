@@ -8,7 +8,7 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 
 ## Security & Vulnerability Reporting
 
-Security disclosures must follow our Coordinated Vulnerability Disclosure (CVD) process outlined in [`SECURITY.md`](SECURITY.md). Please report vulnerabilities privately via [GitHub Security Advisories](https://github.com/kidthales/tol-palettes/security/advisories/new) rather than public issues.
+Security disclosures must follow our Coordinated Vulnerability Disclosure (CVD) process outlined in [`SECURITY.md`](SECURITY.md). Please report vulnerabilities privately via [GitHub Security Advisories](https://github.com/kidthales/tol-palettes/security/advisories/new) rather than public issues. If PVR is unreachable, contact `admin@agogpixel.com`.
 
 ## Developer Certificate of Origin (DCO)
 
@@ -91,6 +91,32 @@ For full 1:1 parity with GitHub Actions CI, run the local runner:
 
 ```pwsh
 pwsh ./scripts/ci-local.ps1
+```
+
+## Verifying Supply-Chain Integrity & Releases
+
+Release packages and standalone assets provide cryptographically verifiable checksums and attestations:
+
+```bash
+# 1. Verify SHA-256 release sums
+sha256sum -c SHA256SUMS.txt
+
+# 2. Verify GitHub Actions build provenance attestations
+gh attestation verify tol-palettes-godot.zip --owner kidthales
+
+# 3. Verify npm package signatures
+npm audit signatures
+```
+
+For web consumers, subresource integrity (SRI) hashes are published in `dist/sri.json`:
+
+```html
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.2.0/dist/css/tol.css"
+  integrity="sha384-..."
+  crossorigin="anonymous"
+/>
 ```
 
 ## Pull Request Guidelines

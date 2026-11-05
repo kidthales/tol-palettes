@@ -7,28 +7,28 @@
       "size_bytes": 29456
     },
     "sri.json": {
-      "sha256": "ce274cc090771d2929e336d09b648a49eb9202751dfc05501f11e8d5527c81f2",
+      "sha256": "25e688e51e0b0f7eb0e87fa357c7349fffbcbff9b84906c696d5a54240d0349f",
       "size_bytes": 4646
     },
-    "tol_palettes.py": {
-      "sha256": "0b6ac7884d118cb60f098dfdfe1a7f3c2c37cd8817c0c2f8632d138310254a21",
-      "size_bytes": 28073
-    },
     "tol-palettes-aseprite.zip": {
-      "sha256": "ec97a92c050a091d3a1b935894f8ebed890c38ab032adc8c2026fc94e3021987",
+      "sha256": "78b1e681170032f7cd1c0fd31edf2cb08fd201423a014dc2598a138e02e6de39",
       "size_bytes": 14799
     },
     "tol-palettes-godot.zip": {
-      "sha256": "643da69cfe5ee03e44896c68bb0a808673c354062a7bd47de9da573451cb9c26",
+      "sha256": "bfcc3a57b80e3591ee2838d0ce95ec897de7bc2657189902c292ca14b0b44819",
       "size_bytes": 20979
     },
     "tol-palettes-gpl.zip": {
-      "sha256": "02570cb70787a7c65483fe7e2a8122e4013a7404cc7a18ca8a48ea672a9b265e",
+      "sha256": "712335f493b34a521b533cb3f4ce528095be89ca13836cd4bfef235009460fb1",
       "size_bytes": 14234
     },
     "tol.css": {
       "sha256": "565a29e384b52f0beba0ba17b02cf68aa1a9c89b7ee3f3bb5feb484642dda09d",
       "size_bytes": 25385
+    },
+    "tol_palettes.py": {
+      "sha256": "0b6ac7884d118cb60f098dfdfe1a7f3c2c37cd8817c0c2f8632d138310254a21",
+      "size_bytes": 28073
     }
   }
 }

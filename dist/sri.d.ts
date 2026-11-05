@@ -16,9 +16,5 @@ export interface SriManifest {
   readonly files: Readonly<Record<string, SriFileEntry>>;
 }
 
-export declare const pkg: string;
-export declare const version: string;
-export declare const files: Readonly<Record<string, SriFileEntry>>;
-
 declare const manifest: SriManifest;
 export default manifest;

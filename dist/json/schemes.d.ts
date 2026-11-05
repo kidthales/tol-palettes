@@ -11,8 +11,5 @@ export interface SchemesBundle {
   readonly schemes: Readonly<Record<SchemeId, Scheme>>;
 }
 
-export declare const $comment: string;
-export declare const schemes: Readonly<Record<SchemeId, Scheme>>;
-
 declare const bundle: SchemesBundle;
 export default bundle;

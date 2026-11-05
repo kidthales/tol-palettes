@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-import { resolveOutDir } from './path-jail.mjs';
+import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { cssFor } from './generate-css.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
@@ -123,7 +123,7 @@ ${badHtml}
 }
 
 export function generateGalleryHtml(schemes = loadSchemes().map((x) => x.data)) {
-  const sorted = [...schemes].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const kinds = ['qualitative', 'diverging', 'sequential', 'special'];
   const cssTokens = sorted.map(cssFor).join('\n');
 
@@ -153,7 +153,7 @@ ${group.map(renderSchemeSection).join('\n')}
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none';" />
     <title>Paul Tol Colour Schemes — Reference Gallery (Values Only)</title>
     <link rel="canonical" href="https://tol-palettes.kidthales.com/" />
     <meta name="description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
@@ -166,6 +166,8 @@ ${group.map(renderSchemeSection).join('\n')}
     <meta name="twitter:description" content="Interactive reference gallery for Paul Tol colour schemes: 22 colorblind-safe qualitative, diverging, and sequential palettes with WCAG contrast metrics." />
     <style>
 ${cssTokens}
+    </style>
+    <style>
       :root {
         color-scheme: light dark;
         --bg: light-dark(#FFFFFF, var(--tol-bright-black));
@@ -440,7 +442,9 @@ export function generateGalleryJs() {
         btn.classList.remove('copied');
         if (codeEl) codeEl.textContent = originalText;
       }, 1200);
-    } catch (_) {}
+    } catch (_) {
+      if (statusEl) statusEl.textContent = 'Copy failed';
+    }
   });
 })();
 `;
@@ -455,17 +459,6 @@ export function generateGallery(opts = {}) {
   writeFileSync(join(galleryDir, 'gallery.js'), generateGalleryJs());
   writeFileSync(join(galleryDir, 'CNAME'), 'tol-palettes.kidthales.com\n');
   return { galleryDir };
-}
-
-function parseCliOutDir(argv = process.argv.slice(2)) {
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--outDir' || argv[i] === '--outdir') {
-      return argv[i + 1];
-    }
-    if (argv[i].startsWith('--outDir=')) return argv[i].slice('--outDir='.length);
-    if (argv[i].startsWith('--outdir=')) return argv[i].slice('--outdir='.length);
-  }
-  return undefined;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

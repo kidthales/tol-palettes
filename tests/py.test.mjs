@@ -10,6 +10,34 @@ import { generatePyModule } from '../tools/generate-py.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pyPath = join(root, 'dist', 'py', 'tol_palettes.py');
 
+function runPython(code) {
+  try {
+    return execFileSync('python3', ['-c', code], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    const isWindowsShimOrNotFound =
+      err.code === 'ENOENT' ||
+      err.status === 9009 ||
+      (typeof err.stderr === 'string' && err.stderr.includes('Python was not found'));
+
+    if (isWindowsShimOrNotFound) {
+      try {
+        return execFileSync('python', ['-c', code], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (innerErr) {
+        const details = innerErr.stderr || innerErr.stdout || innerErr.message;
+        throw new Error(`Python execution failed with 'python':\n${details}`);
+      }
+    }
+    const details = err.stderr || err.stdout || err.message;
+    throw new Error(`Python execution failed with 'python3':\n${details}`);
+  }
+}
+
 // Pinned official values from tol_colors.py 2022.10 (test fixture only)
 const OFFICIAL_CSETS = {
   bright: {
@@ -159,19 +187,15 @@ for name in tp.CMAP_NAMES:
   clrs, bad, mode = tp.tol_cmap_colors(name)
   out["cmaps"][name] = {"colors": list(clrs), "bad": bad, "mode": mode}
 
-for lut in range(1, 24):
+max_lut = len(tp._RAINBOW_DISCRETE_LUT)
+for lut in range(1, max_lut + 1):
   clrs, bad, mode = tp.tol_cmap_colors("rainbow_discrete", lut=lut)
   out["rainbow_discrete"][str(lut)] = {"colors": list(clrs), "bad": bad, "mode": mode}
 
 print(json.dumps(out))
 `;
 
-  let stdout;
-  try {
-    stdout = execFileSync('python3', ['-c', pyCheck], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    stdout = execFileSync('python', ['-c', pyCheck], { encoding: 'utf8' });
-  }
+  const stdout = runPython(pyCheck);
   const result = JSON.parse(stdout);
 
   assert.equal(result.schemes_count, 22);
@@ -185,9 +209,10 @@ print(json.dumps(out))
     assert.deepEqual(result.cmaps[name], expected, `cmap mismatch for ${name}`);
   }
 
-  // Verify rainbow_discrete across all 23 lengths and default (22)
+  // Verify rainbow_discrete across all lengths and default (22)
   const rdScheme = loadSchemes().find((s) => s.data.id === 'rainbow-discrete').data;
-  for (let n = 1; n <= 23; n++) {
+  const maxLut = rdScheme.lut.length;
+  for (let n = 1; n <= maxLut; n++) {
     const expectedColors = rdScheme.lut[n - 1].map((i) => rdScheme.colors[i].hex);
     const expectedBad = n === 23 ? '#777777' : '#FFFFFF';
     assert.deepEqual(result.rainbow_discrete[String(n)], {
@@ -248,8 +273,9 @@ for name in discrete_names:
         expected_rgba = to_rgba(clrs[i])
         assert np.allclose(sample_rgba[:3], expected_rgba[:3], atol=1e-3), f"{name}: discretemap stop {i} mismatch"
 
-# 3. Execute tol_cmap('rainbow_discrete', lut=1..23) and assert sampling and bad colors
-for lut in range(1, 24):
+# 3. Execute tol_cmap('rainbow_discrete', lut=1..max_lut) and assert sampling and bad colors
+max_lut = len(tp._RAINBOW_DISCRETE_LUT)
+for lut in range(1, max_lut + 1):
     clrs, bad, mode = tp.tol_cmap_colors('rainbow_discrete', lut=lut)
     cmap = tp.tol_cmap('rainbow_discrete', lut=lut)
     expected_bad = to_rgba(bad)
@@ -299,11 +325,6 @@ assert len(all_ids - covered) == 0, f"Uncovered schemes: {all_ids - covered}"
 print("OK")
 `;
 
-  let stdout;
-  try {
-    stdout = execFileSync('python3', ['-c', pyScript], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    stdout = execFileSync('python', ['-c', pyScript], { encoding: 'utf8' });
-  }
+  const stdout = runPython(pyScript);
   assert.equal(stdout.trim(), 'OK');
 });

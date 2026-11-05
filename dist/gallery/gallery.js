@@ -42,6 +42,8 @@
         btn.classList.remove('copied');
         if (codeEl) codeEl.textContent = originalText;
       }, 1200);
-    } catch (_) {}
+    } catch (_) {
+      if (statusEl) statusEl.textContent = 'Copy failed';
+    }
   });
 })();

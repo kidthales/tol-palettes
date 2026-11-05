@@ -28,10 +28,10 @@ test('dist/gallery/index.html is deterministic, attributed, CSP-hardened, and ha
   assert.match(html, /<meta property="og:url" content="https:\/\/tol-palettes\.kidthales\.com\/" \/>/);
   assert.match(html, /<meta name="twitter:card" content="summary" \/>/);
 
-  // Content-Security-Policy compliance
+  // Content-Security-Policy compliance with base-uri and form-action hardening
   assert.match(
     html,
-    /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" \/>/,
+    /<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none';" \/>/,
   );
 
   // External script reference to gallery.js
@@ -55,9 +55,10 @@ test('dist/gallery/gallery.js exists, carries attribution, and matches generator
   assert.match(js, /NOTICE/);
   assert.match(js, /not affiliated with or endorsed by Paul Tol/);
 
-  // Client event logic and feedback
+  // Client event logic, feedback, and error handling
   assert.match(js, /btn\.classList\.add\('copied'\)/);
   assert.match(js, /codeEl\.textContent = 'Copied!'/);
+  assert.match(js, /statusEl\.textContent = 'Copy failed'/);
   assert.match(js, /document\.getElementById\('themeToggle'\)/);
   assert.match(js, /navigator\.clipboard\.writeText/);
   assert.match(js, /data-canvas-set/);
