@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tol-palettes"
-version = "0.3.0"
+version = "0.3.1"
 description = "Paul Tol colour scheme data and generators for accessible, colorblind-safe palettes."
 readme = "README.md"
 requires-python = ">=3.9"

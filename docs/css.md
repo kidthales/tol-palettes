@@ -41,5 +41,5 @@ When published to npm, all CSS files are available via jsDelivr and unpkg:
 <link rel="stylesheet" href="https://unpkg.com/@kidthales/tol-palettes/dist/css/bright.css">
 
 <!-- Pinned version -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.0/dist/css/tol.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.1/dist/css/tol.css">
 ```

@@ -1,6 +1,6 @@
 {
   "package": "@kidthales/tol-palettes",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "files": {
     "dist/css/banded-12.css": {
       "bytes": 767,
