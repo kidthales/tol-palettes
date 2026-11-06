@@ -51,7 +51,10 @@ test('dist/js/index.js and index.d.ts carry attribution headers and export all 2
   }
 
   assert.equal(tol.get('non-existent-scheme'), undefined);
-  assert.throws(() => tol.getScheme('non-existent-scheme'), RangeError);
+  assert.throws(
+    () => tol.getScheme('non-existent-scheme'),
+    /^RangeError: Unknown palette scheme: non-existent-scheme$/,
+  );
 });
 
 test('interpolate matches known reference values for sunset and iridescent', () => {

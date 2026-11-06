@@ -66,7 +66,7 @@ test('dist/assets contains valid zip bundles for Godot, Aseprite, and GPL with L
   const pluginCfgEntry = godotEntries.find((e) => e.path === 'addons/tol_palettes/plugin.cfg');
   const pluginCfgText = pluginCfgEntry.data.toString('utf8');
   assert.match(pluginCfgText, /\[plugin\]/);
-  assert.match(pluginCfgText, /name="Paul Tol Colour Palettes"/);
+  assert.match(pluginCfgText, /name="Tol Color Palettes \(Colorblind-Safe\)"/);
   assert.match(pluginCfgText, /Paul Tol/);
 
   // 2. Verify Aseprite Zip

@@ -22,6 +22,8 @@ test('dist/gallery/index.html is deterministic, attributed, CSP-hardened, and ha
   assert.match(html, /Paul Tol/);
   assert.match(html, /NOTICE/);
   assert.match(html, /not affiliated with or endorsed by Paul Tol/);
+  assert.match(html, /<h1>Colorblind-Safe Colour Schemes — Reference Gallery<\/h1>/);
+  assert.doesNotMatch(html, /<h1>Paul Tol Colour Schemes/);
 
   // Canonical URL & OpenGraph / Twitter metadata
   assert.match(html, /<link rel="canonical" href="https:\/\/tol-palettes\.kidthales\.com\/" \/>/);
