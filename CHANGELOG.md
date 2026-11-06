@@ -5,6 +5,21 @@ All notable changes to `@kidthales/tol-palettes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-06
+
+For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_3_1.md`](docs/RELEASE_NOTES_V0_3_1.md).
+
+### Changed
+- Toned down repetitive personal name references across runtime messages, metadata, Godot GDScript helper, JS ESM module, and gallery templates (#76).
+- Bumped project version to `0.3.1` across `package.json`, `package-lock.json`, and `pyproject.toml`.
+- Updated `dist/godot/addons/tol_palettes/plugin.cfg` to register `version="0.3.1"`.
+- Pinned CDN references in `docs/css.md`, `SECURITY.md`, and `CONTRIBUTING.md` to `0.3.1`.
+- Updated `CITATION.cff` release version to `0.3.1` and release date to `2026-11-06`.
+- Regenerated all distribution artifacts, bundle archives (`dist/assets/*.zip`), and manifests (`dist/manifest.json`, `dist/sri.json`, `dist/sri.d.ts`, `dist/SHA256SUMS.txt`) with `0.3.1` metadata and fresh cryptographic hashes.
+
+### Security
+- Bumped `fast-uri` dependency from `3.1.8` to `3.1.9` in dependency trees (#74).
+
 ## [0.3.0] - 2026-11-05
 
 For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_3_0.md`](docs/RELEASE_NOTES_V0_3_0.md).
