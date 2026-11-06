@@ -115,6 +115,8 @@ test('dist/godot contains valid ColorPalette .tres files and tol_palettes.gd wit
   // Assert lut_bad and helper get_discrete_rainbow_bad
   assert.match(gd, /"lut_bad":\s*\{\s*"23":\s*Color\("#777777"\)\s*\}/);
   assert.match(gd, /static func get_discrete_rainbow_bad\(n: int\) -> Color:/);
+  assert.match(gd, /assert\(SCHEMES\.has\(scheme_id\), "Unknown palette scheme: " \+ scheme_id\)/);
+  assert.doesNotMatch(gd, /Unknown Paul Tol scheme:/);
 
   // Assert subranges metadata in rainbow-smooth
   assert.match(gd, /"rainbow-smooth":\s*\{[\s\S]*?"subranges":\s*\[/);

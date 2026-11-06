@@ -73,7 +73,7 @@ export function generateGodotPluginCfg(version = pkg.version) {
 
 ${comments}
 
-name="Paul Tol Colour Palettes"
+name="Tol Color Palettes (Colorblind-Safe)"
 description="Colour-blind safe colour schemes by Paul Tol formatted as Godot 4.x ColorPalette resources and GDScript lookup helper."
 author="kidthales (data by Paul Tol)"
 version="${version}"
@@ -155,17 +155,17 @@ ${lutRows}
 
 
 static func get_colors(scheme_id: String) -> PackedColorArray:
-\tassert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+\tassert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 \treturn SCHEMES[scheme_id]["colors"]
 
 
 static func get_hex(scheme_id: String) -> PackedStringArray:
-\tassert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+\tassert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 \treturn SCHEMES[scheme_id]["hex"]
 
 
 static func get_named(scheme_id: String, color_name: String) -> Color:
-\tassert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+\tassert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 \tvar scheme: Dictionary = SCHEMES[scheme_id]
 \tassert(scheme.has("named") and scheme["named"].has(color_name), "Unknown named colour: " + scheme_id + "." + color_name)
 \treturn scheme["named"][color_name]

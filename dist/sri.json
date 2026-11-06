@@ -123,9 +123,9 @@
       "integrity": "sha384-aS9dLFtMXlX4Nqgkl7AaJ0l5zxXDNm2dHEC9AwR7NZUdVZJbS0KO7gulIQlPpk/z"
     },
     "dist/js/index.js": {
-      "bytes": 29591,
-      "gzipBytes": 5134,
-      "integrity": "sha384-5i9f4enhaTOehU9xGv5224joV4duOt/iYzzsupaIhQU6UETDiW6jxNygVqVtTSqR"
+      "bytes": 29590,
+      "gzipBytes": 5132,
+      "integrity": "sha384-sbQRpglxX0MFKb/WArhUx+U7vt05WiOQarCqXU0tnNNIFJ7guSOh1YUd45tQc5xa"
     },
     "dist/json/schemes.json": {
       "bytes": 29456,

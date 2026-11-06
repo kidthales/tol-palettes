@@ -269,17 +269,17 @@ const RAINBOW_DISCRETE_LUT: Array = [
 
 
 static func get_colors(scheme_id: String) -> PackedColorArray:
-	assert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+	assert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 	return SCHEMES[scheme_id]["colors"]
 
 
 static func get_hex(scheme_id: String) -> PackedStringArray:
-	assert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+	assert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 	return SCHEMES[scheme_id]["hex"]
 
 
 static func get_named(scheme_id: String, color_name: String) -> Color:
-	assert(SCHEMES.has(scheme_id), "Unknown Paul Tol scheme: " + scheme_id)
+	assert(SCHEMES.has(scheme_id), "Unknown palette scheme: " + scheme_id)
 	var scheme: Dictionary = SCHEMES[scheme_id]
 	assert(scheme.has("named") and scheme["named"].has(color_name), "Unknown named colour: " + scheme_id + "." + color_name)
 	return scheme["named"][color_name]

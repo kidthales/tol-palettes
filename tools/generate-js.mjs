@@ -76,7 +76,7 @@ export function getScheme(schemeOrId) {
     return schemeOrId;
   }
   const s = get(String(schemeOrId));
-  if (!s) throw new RangeError('Unknown Paul Tol scheme: ' + schemeOrId);
+  if (!s) throw new RangeError('Unknown palette scheme: ' + schemeOrId);
   return s;
 }
 
