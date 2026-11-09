@@ -207,6 +207,80 @@ test('ci-local.ps1 auto-enables $CI when $env:GITHUB_ACTIONS is set', () => {
   );
 });
 
+test('ci-local.ps1 contains no deprecated seldon ci receipt or SeldonBin references', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+
+  assert.ok(!content.includes('ci receipt'), 'ci-local.ps1 must not invoke deprecated "ci receipt"');
+  assert.ok(!content.includes('seldon ci receipt'), 'ci-local.ps1 must not reference "seldon ci receipt"');
+  assert.ok(!content.includes('SeldonBin'), 'ci-local.ps1 must not contain legacy $SeldonBin lookup logic');
+  assert.ok(!content.includes('SELDON_BIN'), 'ci-local.ps1 must not inspect $env:SELDON_BIN');
+});
+
+test('ci-local.ps1 emits Schema v2 structured Gate Summary lines for seldon ci run', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+
+  assert.match(
+    content,
+    /Write-Host\s+["']`nGate Summary:['"]/i,
+    'Expected ci-local.ps1 to emit Gate Summary: header',
+  );
+
+  assert.match(
+    content,
+    /foreach\s*\(\s*\$k\s+in\s+\$GateResults\.Keys\s*\)/,
+    'Expected loop over $GateResults.Keys in summary block',
+  );
+
+  assert.match(
+    content,
+    /Write-Host\s+["']\s*\[\$\{k\}:\s*\$v\]["']/,
+    'Expected formatted "[${k}: $v]" gate summary line emission',
+  );
+});
+
+test('ci-local.ps1 gate summary output conforms to Seldon Schema v2 parser contract', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+  const gateInitMatch = content.match(/\$GateResults\s*=\s*\[ordered\]@\{([^}]+)\}/s);
+  assert.ok(gateInitMatch, 'Expected $GateResults ordered dictionary initialization in ci-local.ps1');
+
+  const declaredGates = [...gateInitMatch[1].matchAll(/["'](gate\d+_[a-zA-Z0-9_]+)["']/g)].map((m) => m[1]);
+  assert.equal(declaredGates.length, 5, 'Expected exactly 5 declared gates in $GateResults');
+
+  const psSnippet = [
+    '$GateResults = [ordered]@{',
+    '  "gate0_workflow_contract" = "pass"',
+    '  "gate1_action_pins_and_leaks" = "pass"',
+    '  "gate2_pwsh_ast_and_lint" = "pass"',
+    '  "gate3_dist_drift" = "not-applicable"',
+    '  "gate4_test_and_pack" = "pass"',
+    '}',
+    'Write-Host "`nGate Summary:"',
+    'foreach ($k in $GateResults.Keys) {',
+    '    $v = "$($GateResults[$k])".ToUpperInvariant()',
+    '    Write-Host "  [${k}: $v]"',
+    '}',
+  ].join('\n');
+  const res = spawnSync('pwsh', ['-NoProfile', '-Command', psSnippet], { encoding: 'utf8' });
+  assert.equal(res.status, 0);
+
+  const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  assert.ok(lines.some((l) => /^gate summary:?$/i.test(l)), 'Missing Gate Summary header in output');
+
+  const gateLineRegex = /^\[(gate\d+_[a-z0-9_]+):\s*(PASS|FAIL|NOT-APPLICABLE)\]$/;
+  const parsedGates = {};
+  for (const line of lines) {
+    const match = line.match(gateLineRegex);
+    if (match) {
+      parsedGates[match[1]] = match[2];
+    }
+  }
+
+  for (const gate of declaredGates) {
+    assert.ok(gate in parsedGates, `Expected gate "${gate}" to be emitted in summary`);
+    assert.match(parsedGates[gate], /^(PASS|FAIL|NOT-APPLICABLE)$/);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Unit tests: hasUnescapedExpression
 // ---------------------------------------------------------------------------
