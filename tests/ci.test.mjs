@@ -741,6 +741,18 @@ jobs:
         run: echo no exit
   verify:
     uses: $/.github/workflows/ci.yml
+  attach-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 `,
     },
     (dir) => {
@@ -749,6 +761,53 @@ jobs:
       assert.ok(res.violations.some((v) => v.includes("tag-guard step must fail closed with 'exit 1'")));
       assert.ok(res.violations.some((v) => v.includes("verify job must declare needs: [tag-guard]")));
       assert.ok(res.violations.some((v) => v.includes("must set package-manager-cache: false")));
+      assert.ok(res.violations.some((v) => v.includes("attach-assets job missing actions/attest step")));
+    },
+  );
+
+  withTempFixture(
+    {
+      'release.yml': `name: Release
+permissions:
+  contents: read
+concurrency:
+  group: release-\${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Verify release tag matches project metadata versions
+        run: exit 1
+  verify:
+    needs: [tag-guard]
+    uses: $/.github/workflows/ci.yml
+  attach-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Attest Build Provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/assets/*.zip
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, true, `Expected valid fixture to pass, got violations: ${res.violations.join('; ')}`);
+      assert.ok(!res.violations.some((v) => v.includes("attach-assets job missing actions/attest step")));
     },
   );
 });
