@@ -388,6 +388,13 @@ try {
     # -------------------------------------------------------------
     # Summary
     # -------------------------------------------------------------
+    # Emit structured gate summary lines for seldon ci run and human operator visibility
+    Write-Host "`nGate Summary:" -ForegroundColor Cyan
+    foreach ($k in $GateResults.Keys) {
+        $v = "$($GateResults[$k])".ToUpperInvariant()
+        Write-Host "  [${k}: $v]"
+    }
+
     $TotalElapsed = [math]::Round($TotalTimer.Elapsed.TotalSeconds, 2)
     Write-Host "`n====================================================" -ForegroundColor Green
     Write-Host " All Local CI Verification Checks PASSED (${TotalElapsed}s)" -ForegroundColor Green
