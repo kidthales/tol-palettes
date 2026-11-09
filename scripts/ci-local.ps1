@@ -168,7 +168,7 @@ try {
                     $line = $lines[$i]
                     if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
                         $target = $matches[1]
-                        if ($target -notmatch '^(\./|\.\./|docker://)') {
+                        if ($target -notmatch '^(\./|\.\./|\$/|docker://)') {
                             if ($target -notmatch '@[0-9a-fA-F]{40}') {
                                 Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
                                 $UnpinnedFound = $true
