@@ -217,6 +217,9 @@ export function auditWorkflows(targetPath, options = {}) {
           if (u.includes('..') || u.includes('\\')) {
             violations.push(`${wfName}: job '${jobId}' uses non-canonical workflow path '${u}'`);
           }
+          if (u.startsWith('$/') && u.includes('@')) {
+            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$/' same-repository workflow references must not specify an @ref)`);
+          }
         } else if (u.startsWith('../')) {
           violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with '$/' or './')`);
         } else if (u.startsWith('docker://')) {
@@ -242,7 +245,9 @@ export function auditWorkflows(targetPath, options = {}) {
         // 4. Action uses pinning and canonical path checks
         if (step.uses) {
           const uses = String(step.uses);
-          if (uses.startsWith('./')) {
+          if (uses.startsWith('$/')) {
+            violations.push(`${wfName}: step '${stepName}' uses '$/' which is only valid for reusable workflow calls at job level ('${uses}')`);
+          } else if (uses.startsWith('./')) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
             }
@@ -414,7 +419,7 @@ export function auditWorkflows(targetPath, options = {}) {
       // release.yml: provenance attestation in attach-assets
       if (jobs['attach-assets']) {
         const aaSteps = Array.isArray(jobs['attach-assets'].steps) ? jobs['attach-assets'].steps : [];
-        const hasAttestation = aaSteps.some((s) => s.uses && (s.uses.startsWith('actions/attest@') || s.uses === 'actions/attest'));
+        const hasAttestation = aaSteps.some((s) => s.uses && s.uses.startsWith('actions/attest@'));
         if (!hasAttestation) {
           violations.push(`${wfName}: attach-assets job missing actions/attest step`);
         }

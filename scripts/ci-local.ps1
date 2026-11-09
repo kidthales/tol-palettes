@@ -72,6 +72,15 @@ function Write-Fail([string]$Message) {
     Write-Host "  -> [FAIL] $Message" -ForegroundColor Red
 }
 
+function Write-CiGateSummary {
+    param([System.Collections.IDictionary]$Results)
+    Write-Host "`nGate Summary:" -ForegroundColor Cyan
+    foreach ($k in $Results.Keys) {
+        $v = "$($Results[$k])".ToUpperInvariant()
+        Write-Host "  [${k}: $v]"
+    }
+}
+
 # Fail-closed guard for -CI mode: reject any skip, quick, or partial-run switch immediately
 if ($CI) {
     $rejectedFlags = @()
@@ -113,9 +122,7 @@ $GateResults = [ordered]@{
     "gate4_test_and_pack"         = "not-applicable"
 }
 
-$ActiveFlags = @()
-if ($Quick) { $ActiveFlags += "-Quick" }
-if ($SkipGenerate) { $ActiveFlags += "-SkipGenerate" }
+$CurrentGate = $null
 
 Push-Location $RootDir
 try {
@@ -134,6 +141,7 @@ try {
     # -------------------------------------------------------------
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
+    $CurrentGate = "gate0_workflow_contract"
     $EffectiveWorkflowsDir = if ($WorkflowsPath) { $WorkflowsPath } else { [System.IO.Path]::Combine($RootDir, ".github", "workflows") }
     Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
     try {
@@ -142,18 +150,21 @@ try {
             throw "Gate 0 workflow single-source verification failed."
         }
         $GateResults["gate0_workflow_contract"] = "pass"
+        $CurrentGate = $null
         Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
     } finally {
         Exit-CiGate
     }
 
     if ($Gate0Only) {
+        Write-CiGateSummary $GateResults
         exit 0
     }
 
     # -------------------------------------------------------------
     # Gate 1: Action Commit SHA Pinning & Secret / Agent Leaks
     # -------------------------------------------------------------
+    $CurrentGate = "gate1_action_pins_and_leaks"
     Enter-CiGate "[1/4] Verifying GitHub Actions commit SHA pins & secret hygiene..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -168,7 +179,12 @@ try {
                     $line = $lines[$i]
                     if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
                         $target = $matches[1]
-                        if ($target -notmatch '^(\./|\.\./|\$/|docker://)') {
+                        if ($target -match '^\$/') {
+                            if ($target -match '@') {
+                                Write-Error "Invalid reusable workflow target in $($wf.Name) line $($i+1): $target ('$/' same-repository workflow references must not specify an @ref)"
+                                $UnpinnedFound = $true
+                            }
+                        } elseif ($target -notmatch '^(\./|\.\./|docker://)') {
                             if ($target -notmatch '@[0-9a-fA-F]{40}') {
                                 Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
                                 $UnpinnedFound = $true
@@ -213,6 +229,7 @@ try {
         }
 
         $GateResults["gate1_action_pins_and_leaks"] = "pass"
+        $CurrentGate = $null
         Write-Pass "Action commit SHA pins and agent leak audits passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -221,6 +238,7 @@ try {
     # -------------------------------------------------------------
     # Gate 2: PowerShell AST, Linter & Schema Validation
     # -------------------------------------------------------------
+    $CurrentGate = "gate2_pwsh_ast_and_lint"
     Enter-CiGate "[2/4] Running PowerShell AST, linter and schema validation..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -276,6 +294,7 @@ try {
         }
 
         $GateResults["gate2_pwsh_ast_and_lint"] = "pass"
+        $CurrentGate = $null
         Write-Pass "PowerShell AST, linter, and schema validations passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -284,6 +303,7 @@ try {
     # -------------------------------------------------------------
     # Gate 3: Generated Distribution Drift Audit
     # -------------------------------------------------------------
+    $CurrentGate = "gate3_dist_drift"
     Enter-CiGate "[3/4] Verifying generated distribution outputs are up to date..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -307,9 +327,11 @@ try {
             }
 
             $GateResults["gate3_dist_drift"] = "pass"
+            $CurrentGate = $null
             Write-Pass "Generated outputs are up to date and clean." $StepTimer
         } else {
             $GateResults["gate3_dist_drift"] = "not-applicable"
+            $CurrentGate = $null
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
     } finally {
@@ -319,6 +341,7 @@ try {
     # -------------------------------------------------------------
     # Gate 4: Composite Test Suite & Packaging Verification
     # -------------------------------------------------------------
+    $CurrentGate = "gate4_test_and_pack"
     Enter-CiGate "[4/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -379,6 +402,7 @@ try {
         }
 
         $GateResults["gate4_test_and_pack"] = "pass"
+        $CurrentGate = $null
         Write-Pass "Test suite and packaging dry-run passed." $StepTimer
     } finally {
         Exit-CiGate
@@ -389,16 +413,21 @@ try {
     # Summary
     # -------------------------------------------------------------
     # Emit structured gate summary lines for seldon ci run and human operator visibility
-    Write-Host "`nGate Summary:" -ForegroundColor Cyan
-    foreach ($k in $GateResults.Keys) {
-        $v = "$($GateResults[$k])".ToUpperInvariant()
-        Write-Host "  [${k}: $v]"
-    }
+    Write-CiGateSummary $GateResults
 
     $TotalElapsed = [math]::Round($TotalTimer.Elapsed.TotalSeconds, 2)
     Write-Host "`n====================================================" -ForegroundColor Green
     Write-Host " All Local CI Verification Checks PASSED (${TotalElapsed}s)" -ForegroundColor Green
     Write-Host "====================================================" -ForegroundColor Green
+} catch {
+    if ($CurrentGate) {
+        $GateResults[$CurrentGate] = "fail"
+    }
+    Write-CiGateSummary $GateResults
+    Write-Host "`n====================================================" -ForegroundColor Red
+    Write-Host " Local CI Verification FAILED: $_" -ForegroundColor Red
+    Write-Host "====================================================" -ForegroundColor Red
+    exit 1
 } finally {
     Pop-Location
 }

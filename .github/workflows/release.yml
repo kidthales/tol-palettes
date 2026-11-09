@@ -254,6 +254,7 @@ jobs:
             dist/SHA256SUMS.txt
             dist/manifest.json
             dist/sri.json
+          create-storage-record: false
 
   notify:
     name: Discord Release Notification
