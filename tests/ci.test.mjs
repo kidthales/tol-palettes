@@ -145,7 +145,12 @@ test('all third-party actions across all workflow files are pinned to 40-charact
       const match = line.match(/^\s*(?:-\s+)?uses:\s*['"]?([^'"\s#]+)['"]?/);
       if (match) {
         const actionRef = match[1];
-        if (actionRef.startsWith('./') || actionRef.startsWith('../') || actionRef.startsWith('docker://')) {
+        if (
+          actionRef.startsWith('./') ||
+          actionRef.startsWith('../') ||
+          actionRef.startsWith('$/') ||
+          actionRef.startsWith('docker://')
+        ) {
           continue;
         }
         assert.match(
@@ -204,6 +209,121 @@ test('ci-local.ps1 auto-enables $CI when $env:GITHUB_ACTIONS is set', () => {
     content,
     /\$IsCI\s*=\s*\$CI\.IsPresent\s+-or\s+\(-not\s+\[string\]::IsNullOrWhiteSpace\(\$env:GITHUB_ACTIONS\)\)/,
     'Expected GITHUB_ACTIONS check for auto-enabling $CI',
+  );
+});
+
+test('ci-local.ps1 contains no deprecated seldon ci receipt or SeldonBin references', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+
+  assert.ok(!content.includes('ci receipt'), 'ci-local.ps1 must not invoke deprecated "ci receipt"');
+  assert.ok(!content.includes('seldon ci receipt'), 'ci-local.ps1 must not reference "seldon ci receipt"');
+  assert.ok(!content.includes('SeldonBin'), 'ci-local.ps1 must not contain legacy $SeldonBin lookup logic');
+  assert.ok(!content.includes('SELDON_BIN'), 'ci-local.ps1 must not inspect $env:SELDON_BIN');
+});
+
+test('ci-local.ps1 emits Schema v2 structured Gate Summary lines for seldon ci run', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+
+  assert.match(
+    content,
+    /function\s+Write-CiGateSummary/i,
+    'Expected ci-local.ps1 to define Write-CiGateSummary helper',
+  );
+
+  assert.match(
+    content,
+    /Write-Host\s+["']`nGate Summary:['"]/i,
+    'Expected ci-local.ps1 to emit Gate Summary: header',
+  );
+
+  assert.match(
+    content,
+    /foreach\s*\(\s*\$k\s+in\s+\$Results\.Keys\s*\)/,
+    'Expected loop over $Results.Keys in summary block',
+  );
+
+  assert.match(
+    content,
+    /Write-Host\s+["']\s*\[\$\{k\}:\s*\$v\]["']/,
+    'Expected formatted "[${k}: $v]" gate summary line emission',
+  );
+});
+
+test('ci-local.ps1 gate summary output conforms to Seldon Schema v2 parser contract', () => {
+  const content = readFileSync(scriptPath, 'utf8');
+  const gateInitMatch = content.match(/\$GateResults\s*=\s*\[ordered\]@\{([^}]+)\}/s);
+  assert.ok(gateInitMatch, 'Expected $GateResults ordered dictionary initialization in ci-local.ps1');
+
+  const declaredGates = [...gateInitMatch[1].matchAll(/["'](gate\d+_[a-zA-Z0-9_]+)["']/g)].map((m) => m[1]);
+  assert.equal(declaredGates.length, 5, 'Expected exactly 5 declared gates in $GateResults');
+
+  // Extract Write-CiGateSummary directly from ci-local.ps1 to prevent test tautology
+  const funcMatch = content.match(/function\s+Write-CiGateSummary\s*\{[\s\S]*?\n\}/);
+  assert.ok(funcMatch, 'Expected Write-CiGateSummary function in ci-local.ps1');
+
+  const psSnippet = [
+    funcMatch[0],
+    '$GateResults = [ordered]@{',
+    '  "gate0_workflow_contract" = "pass"',
+    '  "gate1_action_pins_and_leaks" = "pass"',
+    '  "gate2_pwsh_ast_and_lint" = "pass"',
+    '  "gate3_dist_drift" = "not-applicable"',
+    '  "gate4_test_and_pack" = "pass"',
+    '}',
+    'Write-CiGateSummary $GateResults',
+  ].join('\n');
+  const res = spawnSync('pwsh', ['-NoProfile', '-Command', psSnippet], { encoding: 'utf8' });
+  assert.equal(res.status, 0);
+
+  const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  assert.ok(lines.some((l) => /^gate summary:?$/i.test(l)), 'Missing Gate Summary header in output');
+
+  const gateLineRegex = /^\[(gate\d+_[a-z0-9_]+):\s*(PASS|FAIL|NOT-APPLICABLE)\]$/;
+  const parsedGates = {};
+  for (const line of lines) {
+    const match = line.match(gateLineRegex);
+    if (match) {
+      parsedGates[match[1]] = match[2];
+    }
+  }
+
+  for (const gate of declaredGates) {
+    assert.ok(gate in parsedGates, `Expected gate "${gate}" to be emitted in summary`);
+    assert.match(parsedGates[gate], /^(PASS|FAIL|NOT-APPLICABLE)$/);
+  }
+});
+
+test('ci-local.ps1 emits Gate Summary with FAIL on gate failure path', () => {
+  withTempFixture(
+    {
+      'unauthorized.yml': `name: Unauthorized
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Unauthorized inline run
+        run: echo "rogue step"
+`,
+    },
+    (fixtureDir) => {
+      const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', fixtureDir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(res.status, 0, 'Expected non-zero exit status for failing run');
+      const combined = (res.stdout || '') + (res.stderr || '');
+      assert.ok(combined.includes('Gate Summary:'), `Expected "Gate Summary:" in output on failure: ${combined}`);
+      assert.ok(
+        combined.includes('[gate0_workflow_contract: FAIL]'),
+        `Expected "[gate0_workflow_contract: FAIL]" in output: ${combined}`,
+      );
+    },
   );
 });
 
@@ -355,6 +475,58 @@ jobs:
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes('uses non-canonical relative path')));
+    },
+  );
+});
+
+test('auditWorkflows and ci-local.ps1 reject $/ workflow targets with @ref and $/ in steps', () => {
+  withTempFixture(
+    {
+      'dollar_ref.yml': `name: DollarRef
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: $/.github/workflows/ci.yml@main
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
+
+      // Also verify ci-local.ps1 Gate 1 rejects it
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes("same-repository workflow references must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'dollar_step.yml': `name: DollarStep
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Invalid step uses
+        uses: $/.github/actions/my-action
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("only valid for reusable workflow calls at job level")));
     },
   );
 });
@@ -661,7 +833,19 @@ jobs:
       - name: Verify release tag matches project metadata versions
         run: echo no exit
   verify:
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
+  attach-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 `,
     },
     (dir) => {
@@ -670,6 +854,54 @@ jobs:
       assert.ok(res.violations.some((v) => v.includes("tag-guard step must fail closed with 'exit 1'")));
       assert.ok(res.violations.some((v) => v.includes("verify job must declare needs: [tag-guard]")));
       assert.ok(res.violations.some((v) => v.includes("must set package-manager-cache: false")));
+      assert.ok(res.violations.some((v) => v.includes("attach-assets job missing actions/attest step")));
+    },
+  );
+
+  withTempFixture(
+    {
+      'release.yml': `name: Release
+permissions:
+  contents: read
+concurrency:
+  group: release-\${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Verify release tag matches project metadata versions
+        run: exit 1
+  verify:
+    needs: [tag-guard]
+    uses: $/.github/workflows/ci.yml
+  attach-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Attest Build Provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/assets/*.zip
+          create-storage-record: false
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, true, `Expected valid fixture to pass, got violations: ${res.violations.join('; ')}`);
+      assert.ok(!res.violations.some((v) => v.includes("attach-assets job missing actions/attest step")));
     },
   );
 });

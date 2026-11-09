@@ -213,12 +213,15 @@ export function auditWorkflows(targetPath, options = {}) {
       // Job-level reusable workflow call check
       if (job.uses) {
         const u = String(job.uses);
-        if (u.startsWith('./')) {
+        if (u.startsWith('$/') || u.startsWith('./')) {
           if (u.includes('..') || u.includes('\\')) {
             violations.push(`${wfName}: job '${jobId}' uses non-canonical workflow path '${u}'`);
           }
+          if (u.startsWith('$/') && u.includes('@')) {
+            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$/' same-repository workflow references must not specify an @ref)`);
+          }
         } else if (u.startsWith('../')) {
-          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with './')`);
+          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with '$/' or './')`);
         } else if (u.startsWith('docker://')) {
           if (!/@sha256:[0-9a-fA-F]{64}$/.test(u)) {
             violations.push(`${wfName}: job '${jobId}' uses unpinned docker action '${u}' (must pin to @sha256 digest)`);
@@ -242,7 +245,9 @@ export function auditWorkflows(targetPath, options = {}) {
         // 4. Action uses pinning and canonical path checks
         if (step.uses) {
           const uses = String(step.uses);
-          if (uses.startsWith('./')) {
+          if (uses.startsWith('$/')) {
+            violations.push(`${wfName}: step '${stepName}' uses '$/' which is only valid for reusable workflow calls at job level ('${uses}')`);
+          } else if (uses.startsWith('./')) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
             }
@@ -310,8 +315,8 @@ export function auditWorkflows(targetPath, options = {}) {
       if (jobId === 'test-and-build' || jobId === 'verify') {
         if (steps.length > 0 && !jobRunsCanonicalCi) {
           violations.push(`${wfName}: verify job '${jobId}' defines steps but does not invoke './scripts/ci-local.ps1 -CI'.`);
-        } else if (steps.length === 0 && job.uses !== './.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call './.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
+        } else if (steps.length === 0 && job.uses !== '$/.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call '$/.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
         }
       }
     }
@@ -356,8 +361,8 @@ export function auditWorkflows(targetPath, options = {}) {
       // pages.yml: verify delegation
       if (!jobs.verify) {
         violations.push(`${wfName}: missing 'verify' job delegation`);
-      } else if (jobs.verify.uses !== './.github/workflows/ci.yml') {
-        violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+      } else if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
+        violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
       }
 
       // pages.yml: build job needs verify
@@ -395,8 +400,8 @@ export function auditWorkflows(targetPath, options = {}) {
         if (!needs.includes('tag-guard')) {
           violations.push(`${wfName}: verify job must declare needs: [tag-guard]`);
         }
-        if (jobs.verify.uses !== './.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+        if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
         }
       }
 
@@ -414,9 +419,9 @@ export function auditWorkflows(targetPath, options = {}) {
       // release.yml: provenance attestation in attach-assets
       if (jobs['attach-assets']) {
         const aaSteps = Array.isArray(jobs['attach-assets'].steps) ? jobs['attach-assets'].steps : [];
-        const hasAttestation = aaSteps.some((s) => s.uses && s.uses.includes('actions/attest-build-provenance'));
+        const hasAttestation = aaSteps.some((s) => s.uses && s.uses.startsWith('actions/attest@'));
         if (!hasAttestation) {
-          violations.push(`${wfName}: attach-assets job missing actions/attest-build-provenance step`);
+          violations.push(`${wfName}: attach-assets job missing actions/attest step`);
         }
       }
     }

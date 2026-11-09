@@ -72,6 +72,15 @@ function Write-Fail([string]$Message) {
     Write-Host "  -> [FAIL] $Message" -ForegroundColor Red
 }
 
+function Write-CiGateSummary {
+    param([System.Collections.IDictionary]$Results)
+    Write-Host "`nGate Summary:" -ForegroundColor Cyan
+    foreach ($k in $Results.Keys) {
+        $v = "$($Results[$k])".ToUpperInvariant()
+        Write-Host "  [${k}: $v]"
+    }
+}
+
 # Fail-closed guard for -CI mode: reject any skip, quick, or partial-run switch immediately
 if ($CI) {
     $rejectedFlags = @()
@@ -113,10 +122,6 @@ $GateResults = [ordered]@{
     "gate4_test_and_pack"         = "not-applicable"
 }
 
-$ActiveFlags = @()
-if ($Quick) { $ActiveFlags += "-Quick" }
-if ($SkipGenerate) { $ActiveFlags += "-SkipGenerate" }
-
 Push-Location $RootDir
 try {
     # Upfront runtime and dependency assertions
@@ -143,11 +148,15 @@ try {
         }
         $GateResults["gate0_workflow_contract"] = "pass"
         Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
+    } catch {
+        $GateResults["gate0_workflow_contract"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
 
     if ($Gate0Only) {
+        Write-CiGateSummary $GateResults
         exit 0
     }
 
@@ -168,7 +177,12 @@ try {
                     $line = $lines[$i]
                     if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
                         $target = $matches[1]
-                        if ($target -notmatch '^(\./|\.\./|docker://)') {
+                        if ($target -match '^\$/') {
+                            if ($target -match '@') {
+                                Write-Error "Invalid reusable workflow target in $($wf.Name) line $($i+1): $target ('$/' same-repository workflow references must not specify an @ref)"
+                                $UnpinnedFound = $true
+                            }
+                        } elseif ($target -notmatch '^(\./|\.\./|docker://)') {
                             if ($target -notmatch '@[0-9a-fA-F]{40}') {
                                 Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
                                 $UnpinnedFound = $true
@@ -214,6 +228,9 @@ try {
 
         $GateResults["gate1_action_pins_and_leaks"] = "pass"
         Write-Pass "Action commit SHA pins and agent leak audits passed." $StepTimer
+    } catch {
+        $GateResults["gate1_action_pins_and_leaks"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -277,6 +294,9 @@ try {
 
         $GateResults["gate2_pwsh_ast_and_lint"] = "pass"
         Write-Pass "PowerShell AST, linter, and schema validations passed." $StepTimer
+    } catch {
+        $GateResults["gate2_pwsh_ast_and_lint"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -312,6 +332,9 @@ try {
             $GateResults["gate3_dist_drift"] = "not-applicable"
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
+    } catch {
+        $GateResults["gate3_dist_drift"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -380,75 +403,30 @@ try {
 
         $GateResults["gate4_test_and_pack"] = "pass"
         Write-Pass "Test suite and packaging dry-run passed." $StepTimer
+    } catch {
+        $GateResults["gate4_test_and_pack"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
 
-    # -------------------------------------------------------------
-    # Write Local CI Receipt (.ci-local/receipt.json + history.jsonl)
-    # -------------------------------------------------------------
-    if ($CI) {
-        Write-Host "`n  -> Skipping local CI receipt generation under -CI mode." -ForegroundColor Gray
-    } else {
-        $SeldonBin = $null
-        if ($env:SELDON_BIN) {
-            if ($env:SELDON_BIN -ne "none" -and (Test-Path $env:SELDON_BIN)) {
-                $SeldonBin = $env:SELDON_BIN
-            }
-        } else {
-            $StagingBin = "C:\Users\kidthales\.gemini\config\plugins\foundation\bin\seldon-staging.exe"
-            $WinBin = "C:\Users\kidthales\.gemini\config\plugins\foundation\bin\seldon.exe"
-            if ((Test-Path $StagingBin) -and (Test-Path $WinBin)) {
-                if ((Get-Item $StagingBin).LastWriteTimeUtc -ge (Get-Item $WinBin).LastWriteTimeUtc) {
-                    $SeldonBin = $StagingBin
-                } else {
-                    $SeldonBin = $WinBin
-                }
-            } elseif (Test-Path $StagingBin) {
-                $SeldonBin = $StagingBin
-            } elseif (Test-Path $WinBin) {
-                $SeldonBin = $WinBin
-            } else {
-                $PathCmd = Get-Command "seldon" -ErrorAction SilentlyContinue
-                if ($PathCmd) {
-                    $SeldonBin = $PathCmd.Source
-                }
-            }
-        }
-
-        if (-not $SeldonBin) {
-            Write-Host "`n  -> Skipping local CI receipt generation (seldon binary not found)." -ForegroundColor Gray
-        } else {
-            $GitStatus = (& git status --porcelain)
-            if ($GitStatus) {
-                Write-Host "`n  -> Skipping local CI receipt generation (working tree has uncommitted changes; commit changes and re-run on a clean tree to mint receipt)." -ForegroundColor Yellow
-            } else {
-                Write-Host "`n[Receipt] Recording local CI receipt via seldon ci receipt..." -ForegroundColor Yellow
-                $GatePairs = @()
-                foreach ($k in $GateResults.Keys) {
-                    $GatePairs += "$k=$($GateResults[$k])"
-                }
-                $GateArg = $GatePairs -join ","
-                $ReceiptArgs = @("ci", "receipt", "--dir", $RootDir, "--script-path", "scripts/ci-local.ps1", "--gates", $GateArg)
-                if ($ActiveFlags.Count -gt 0) {
-                    $ReceiptArgs += @("--flags", ($ActiveFlags -join ","))
-                }
-                & $SeldonBin @ReceiptArgs
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to write local CI receipt via seldon ci receipt."
-                }
-                Write-Host "  -> Local CI receipt written to .ci-local/receipt.json." -ForegroundColor Green
-            }
-        }
-    }
 
     # -------------------------------------------------------------
     # Summary
     # -------------------------------------------------------------
+    # Emit structured gate summary lines for seldon ci run and human operator visibility
+    Write-CiGateSummary $GateResults
+
     $TotalElapsed = [math]::Round($TotalTimer.Elapsed.TotalSeconds, 2)
     Write-Host "`n====================================================" -ForegroundColor Green
     Write-Host " All Local CI Verification Checks PASSED (${TotalElapsed}s)" -ForegroundColor Green
     Write-Host "====================================================" -ForegroundColor Green
+} catch {
+    Write-CiGateSummary $GateResults
+    Write-Host "`n====================================================" -ForegroundColor Red
+    Write-Host " Local CI Verification FAILED: $_" -ForegroundColor Red
+    Write-Host "====================================================" -ForegroundColor Red
+    exit 1
 } finally {
     Pop-Location
 }
