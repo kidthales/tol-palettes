@@ -384,63 +384,6 @@ try {
         Exit-CiGate
     }
 
-    # -------------------------------------------------------------
-    # Write Local CI Receipt (.ci-local/receipt.json + history.jsonl)
-    # -------------------------------------------------------------
-    if ($CI) {
-        Write-Host "`n  -> Skipping local CI receipt generation under -CI mode." -ForegroundColor Gray
-    } else {
-        $SeldonBin = $null
-        if ($env:SELDON_BIN) {
-            if ($env:SELDON_BIN -ne "none" -and (Test-Path $env:SELDON_BIN)) {
-                $SeldonBin = $env:SELDON_BIN
-            }
-        } else {
-            $StagingBin = "C:\Users\kidthales\.gemini\config\plugins\foundation\bin\seldon-staging.exe"
-            $WinBin = "C:\Users\kidthales\.gemini\config\plugins\foundation\bin\seldon.exe"
-            if ((Test-Path $StagingBin) -and (Test-Path $WinBin)) {
-                if ((Get-Item $StagingBin).LastWriteTimeUtc -ge (Get-Item $WinBin).LastWriteTimeUtc) {
-                    $SeldonBin = $StagingBin
-                } else {
-                    $SeldonBin = $WinBin
-                }
-            } elseif (Test-Path $StagingBin) {
-                $SeldonBin = $StagingBin
-            } elseif (Test-Path $WinBin) {
-                $SeldonBin = $WinBin
-            } else {
-                $PathCmd = Get-Command "seldon" -ErrorAction SilentlyContinue
-                if ($PathCmd) {
-                    $SeldonBin = $PathCmd.Source
-                }
-            }
-        }
-
-        if (-not $SeldonBin) {
-            Write-Host "`n  -> Skipping local CI receipt generation (seldon binary not found)." -ForegroundColor Gray
-        } else {
-            $GitStatus = (& git status --porcelain)
-            if ($GitStatus) {
-                Write-Host "`n  -> Skipping local CI receipt generation (working tree has uncommitted changes; commit changes and re-run on a clean tree to mint receipt)." -ForegroundColor Yellow
-            } else {
-                Write-Host "`n[Receipt] Recording local CI receipt via seldon ci receipt..." -ForegroundColor Yellow
-                $GatePairs = @()
-                foreach ($k in $GateResults.Keys) {
-                    $GatePairs += "$k=$($GateResults[$k])"
-                }
-                $GateArg = $GatePairs -join ","
-                $ReceiptArgs = @("ci", "receipt", "--dir", $RootDir, "--script-path", "scripts/ci-local.ps1", "--gates", $GateArg)
-                if ($ActiveFlags.Count -gt 0) {
-                    $ReceiptArgs += @("--flags", ($ActiveFlags -join ","))
-                }
-                & $SeldonBin @ReceiptArgs
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to write local CI receipt via seldon ci receipt."
-                }
-                Write-Host "  -> Local CI receipt written to .ci-local/receipt.json." -ForegroundColor Green
-            }
-        }
-    }
 
     # -------------------------------------------------------------
     # Summary
