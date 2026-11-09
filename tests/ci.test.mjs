@@ -145,7 +145,12 @@ test('all third-party actions across all workflow files are pinned to 40-charact
       const match = line.match(/^\s*(?:-\s+)?uses:\s*['"]?([^'"\s#]+)['"]?/);
       if (match) {
         const actionRef = match[1];
-        if (actionRef.startsWith('./') || actionRef.startsWith('../') || actionRef.startsWith('docker://')) {
+        if (
+          actionRef.startsWith('./') ||
+          actionRef.startsWith('../') ||
+          actionRef.startsWith('$/') ||
+          actionRef.startsWith('docker://')
+        ) {
           continue;
         }
         assert.match(
@@ -735,7 +740,7 @@ jobs:
       - name: Verify release tag matches project metadata versions
         run: echo no exit
   verify:
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
 `,
     },
     (dir) => {
