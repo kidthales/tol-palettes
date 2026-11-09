@@ -137,6 +137,6 @@ test('release.yml workflow enforces tag-guard parity and uploads valid asset pat
   assert.ok(lines.includes('LICENSE'), 'Must upload LICENSE');
   assert.ok(lines.includes('NOTICE'), 'Must upload NOTICE');
 
-  // Ensure build provenance attestation is present
-  assert.match(releaseYml, /actions\/attest-build-provenance/);
+  // Ensure build provenance attestation is present and pinned to commit SHA
+  assert.match(releaseYml, /uses:\s+actions\/attest@[0-9a-fA-F]{40}/);
 });

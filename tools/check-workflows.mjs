@@ -414,9 +414,9 @@ export function auditWorkflows(targetPath, options = {}) {
       // release.yml: provenance attestation in attach-assets
       if (jobs['attach-assets']) {
         const aaSteps = Array.isArray(jobs['attach-assets'].steps) ? jobs['attach-assets'].steps : [];
-        const hasAttestation = aaSteps.some((s) => s.uses && s.uses.includes('actions/attest-build-provenance'));
+        const hasAttestation = aaSteps.some((s) => s.uses && (s.uses.startsWith('actions/attest@') || s.uses === 'actions/attest'));
         if (!hasAttestation) {
-          violations.push(`${wfName}: attach-assets job missing actions/attest-build-provenance step`);
+          violations.push(`${wfName}: attach-assets job missing actions/attest step`);
         }
       }
     }
