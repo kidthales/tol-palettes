@@ -122,8 +122,6 @@ $GateResults = [ordered]@{
     "gate4_test_and_pack"         = "not-applicable"
 }
 
-$CurrentGate = $null
-
 Push-Location $RootDir
 try {
     # Upfront runtime and dependency assertions
@@ -141,7 +139,6 @@ try {
     # -------------------------------------------------------------
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
-    $CurrentGate = "gate0_workflow_contract"
     $EffectiveWorkflowsDir = if ($WorkflowsPath) { $WorkflowsPath } else { [System.IO.Path]::Combine($RootDir, ".github", "workflows") }
     Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
     try {
@@ -150,8 +147,10 @@ try {
             throw "Gate 0 workflow single-source verification failed."
         }
         $GateResults["gate0_workflow_contract"] = "pass"
-        $CurrentGate = $null
         Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
+    } catch {
+        $GateResults["gate0_workflow_contract"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -164,7 +163,6 @@ try {
     # -------------------------------------------------------------
     # Gate 1: Action Commit SHA Pinning & Secret / Agent Leaks
     # -------------------------------------------------------------
-    $CurrentGate = "gate1_action_pins_and_leaks"
     Enter-CiGate "[1/4] Verifying GitHub Actions commit SHA pins & secret hygiene..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -229,8 +227,10 @@ try {
         }
 
         $GateResults["gate1_action_pins_and_leaks"] = "pass"
-        $CurrentGate = $null
         Write-Pass "Action commit SHA pins and agent leak audits passed." $StepTimer
+    } catch {
+        $GateResults["gate1_action_pins_and_leaks"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -238,7 +238,6 @@ try {
     # -------------------------------------------------------------
     # Gate 2: PowerShell AST, Linter & Schema Validation
     # -------------------------------------------------------------
-    $CurrentGate = "gate2_pwsh_ast_and_lint"
     Enter-CiGate "[2/4] Running PowerShell AST, linter and schema validation..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -294,8 +293,10 @@ try {
         }
 
         $GateResults["gate2_pwsh_ast_and_lint"] = "pass"
-        $CurrentGate = $null
         Write-Pass "PowerShell AST, linter, and schema validations passed." $StepTimer
+    } catch {
+        $GateResults["gate2_pwsh_ast_and_lint"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -303,7 +304,6 @@ try {
     # -------------------------------------------------------------
     # Gate 3: Generated Distribution Drift Audit
     # -------------------------------------------------------------
-    $CurrentGate = "gate3_dist_drift"
     Enter-CiGate "[3/4] Verifying generated distribution outputs are up to date..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -327,13 +327,14 @@ try {
             }
 
             $GateResults["gate3_dist_drift"] = "pass"
-            $CurrentGate = $null
             Write-Pass "Generated outputs are up to date and clean." $StepTimer
         } else {
             $GateResults["gate3_dist_drift"] = "not-applicable"
-            $CurrentGate = $null
             Write-Host "  -> Skipping distribution regeneration (-SkipGenerate or -Quick)." -ForegroundColor Gray
         }
+    } catch {
+        $GateResults["gate3_dist_drift"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -341,7 +342,6 @@ try {
     # -------------------------------------------------------------
     # Gate 4: Composite Test Suite & Packaging Verification
     # -------------------------------------------------------------
-    $CurrentGate = "gate4_test_and_pack"
     Enter-CiGate "[4/4] Running test suite and packaging verification (npm test, npm pack, python -m build)..."
     try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -402,8 +402,10 @@ try {
         }
 
         $GateResults["gate4_test_and_pack"] = "pass"
-        $CurrentGate = $null
         Write-Pass "Test suite and packaging dry-run passed." $StepTimer
+    } catch {
+        $GateResults["gate4_test_and_pack"] = "fail"
+        throw
     } finally {
         Exit-CiGate
     }
@@ -420,9 +422,6 @@ try {
     Write-Host " All Local CI Verification Checks PASSED (${TotalElapsed}s)" -ForegroundColor Green
     Write-Host "====================================================" -ForegroundColor Green
 } catch {
-    if ($CurrentGate) {
-        $GateResults[$CurrentGate] = "fail"
-    }
     Write-CiGateSummary $GateResults
     Write-Host "`n====================================================" -ForegroundColor Red
     Write-Host " Local CI Verification FAILED: $_" -ForegroundColor Red
