@@ -335,8 +335,9 @@ test('tol_palettes.py exports PEP 440 __version__ and registers it in __all__', 
   const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
   assert.ok(pyMatch, 'pyproject.toml must define version');
   const expectedPep440 = pyMatch[1];
+  const escapedPep440 = expectedPep440.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  assert.match(content, new RegExp(`^__version__\\s*=\\s*['"]${expectedPep440}['"]`, 'm'));
+  assert.match(content, new RegExp(`^__version__\\s*=\\s*['"]${escapedPep440}['"]`, 'm'));
   assert.match(content, /'__version__'/);
 
   const pyScript = `

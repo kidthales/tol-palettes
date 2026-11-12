@@ -293,24 +293,23 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
 
   // Cross-reference with .github/workflows/release.yml standalone uploads
   const releaseYmlPath = join(root, '.github', 'workflows', 'release.yml');
-  if (existsSync(releaseYmlPath)) {
-    const releaseYml = readFileSync(releaseYmlPath, 'utf8');
-    const uploadMatch = releaseYml.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
-    assert.ok(uploadMatch, 'release.yml must upload assets');
-    const uploadedBases = uploadMatch[1]
-      .split(/\r?\n/)
-      .map((l) => l.trim().replace(/\\$/, '').trim())
-      .filter(Boolean)
-      .map((p) => basename(p))
-      .filter((b) => b !== 'SHA256SUMS.txt');
+  assert.ok(existsSync(releaseYmlPath), '.github/workflows/release.yml must exist for release asset cross-check');
+  const releaseYml = readFileSync(releaseYmlPath, 'utf8');
+  const uploadMatch = releaseYml.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+  assert.ok(uploadMatch, 'release.yml must upload assets');
+  const uploadedBases = uploadMatch[1]
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\\$/, '').trim())
+    .filter(Boolean)
+    .map((p) => basename(p))
+    .filter((b) => b !== 'SHA256SUMS.txt');
 
-    const sumsBases = lines.map((l) => l.trim().split(/\s+/)[1]);
-    assert.deepEqual(
-      sumsBases.sort(),
-      uploadedBases.sort(),
-      'dist/SHA256SUMS.txt entries must match release.yml standalone uploads exactly',
-    );
-  }
+  const sumsBases = lines.map((l) => l.trim().split(/\s+/)[1]);
+  assert.deepEqual(
+    sumsBases.sort(),
+    uploadedBases.sort(),
+    'dist/SHA256SUMS.txt entries must match release.yml standalone uploads exactly',
+  );
 });
 
 test('documentation SRI digests in docs/css.md, SECURITY.md, and CONTRIBUTING.md match dist/sri.json and package.json', () => {

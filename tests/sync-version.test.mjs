@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -8,11 +8,14 @@ import {
   pypiClassifierFor,
   syncVersion,
   parseCliArgs,
+  isValidDateString,
+  getLocalDateString,
   SEMVER_REGEX,
   PEP440_REGEX,
   DATE_REGEX,
   DOC_FILES,
   DOC_LINK_REGEX,
+  DOC_LINK_TAG_REGEX,
 } from '../tools/sync-version.mjs';
 
 test('SEMVER_REGEX validates strict X.Y.Z[-(alpha|beta|rc).N] format', () => {
@@ -51,6 +54,44 @@ test('DATE_REGEX validates YYYY-MM-DD format', () => {
   assert.ok(!DATE_REGEX.test('2026-1-1'));
   assert.ok(!DATE_REGEX.test('12-11-2026'));
   assert.ok(!DATE_REGEX.test('invalid'));
+});
+
+test('isValidDateString enforces strict calendar validity and handles leap years', () => {
+  assert.ok(isValidDateString('2026-11-12'));
+  assert.ok(isValidDateString('2024-02-29'), '2024 is a leap year');
+  assert.ok(isValidDateString('2000-02-29'), '2000 is a leap year');
+
+  // Invalid calendar dates must fail closed
+  assert.ok(!isValidDateString('2026-13-45'));
+  assert.ok(!isValidDateString('2026-02-29'), '2026 is not a leap year');
+  assert.ok(!isValidDateString('2026-04-31'), 'April has 30 days');
+  assert.ok(!isValidDateString('2026-00-10'));
+  assert.ok(!isValidDateString('2026-12-00'));
+  assert.ok(!isValidDateString('2026-1-1'));
+  assert.ok(!isValidDateString(''));
+  assert.ok(!isValidDateString(null));
+  assert.ok(!isValidDateString(12345));
+});
+
+test('getLocalDateString returns valid YYYY-MM-DD date matching local calendar day', () => {
+  const local = getLocalDateString();
+  assert.ok(isValidDateString(local));
+  assert.ok(DATE_REGEX.test(local));
+});
+
+test('DOC_LINK_TAG_REGEX matches single-line and multiline CDN link tags regardless of attribute order', () => {
+  const single = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.1/dist/css/tol.css" integrity="sha384-xyz" crossorigin="anonymous">';
+  const multiline = '<link\n  rel="stylesheet"\n  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.1/dist/css/tol.css"\n  integrity="sha384-xyz"\n  crossorigin="anonymous"\n/>';
+  const reversed = '<link integrity="sha384-xyz" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.1/dist/css/tol.css" rel="stylesheet">';
+
+  assert.ok(DOC_LINK_TAG_REGEX.test(single));
+  assert.ok(DOC_LINK_TAG_REGEX.test(multiline));
+  assert.ok(DOC_LINK_TAG_REGEX.test(reversed));
+
+  const match = single.match(DOC_LINK_REGEX);
+  assert.ok(match);
+  assert.equal(match[1], '0.3.1');
+  assert.equal(match[2], 'sha384-xyz');
 });
 
 test('semverToPep440 translates standard SemVer and pre-releases deterministically', () => {
@@ -106,8 +147,16 @@ test('parseCliArgs fails closed on missing semver, bare flags, unknown flags, an
 function createFixture(tmpDir, options = {}) {
   const pkg = { name: 'test-pkg', version: '0.1.0' };
   const lock = { name: 'test-pkg', version: '0.1.0', packages: { '': { version: '0.1.0' } } };
-  const pyToml = `[project]\nname = "test-pkg"\nversion = "0.1.0"\nclassifiers = [\n  "Development Status :: 4 - Beta",\n]\n`;
-  const cff = `cff-version: 1.2.0\nversion: 0.1.0\ndate-released: 2026-01-01\n`;
+  const pyToml = options.corruptPyTomlVersion
+    ? `[project]\nname = "test-pkg"\nclassifiers = [\n  "Development Status :: 4 - Beta",\n]\n`
+    : options.corruptPyTomlClassifier
+      ? `[project]\nname = "test-pkg"\nversion = "0.1.0"\nclassifiers = []\n`
+      : `[project]\nname = "test-pkg"\nversion = "0.1.0"\nclassifiers = [\n  "Development Status :: 4 - Beta",\n]\n`;
+  const cff = options.corruptCffVersion
+    ? `cff-version: 1.2.0\ndate-released: 2026-01-01\n`
+    : options.corruptCffDate
+      ? `cff-version: 1.2.0\nversion: 0.1.0\n`
+      : `cff-version: 1.2.0\nversion: 0.1.0\ndate-released: 2026-01-01\n`;
 
   writeFileSync(join(tmpDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
   writeFileSync(join(tmpDir, 'package-lock.json'), JSON.stringify(lock, null, 2) + '\n');
@@ -132,20 +181,29 @@ function createFixture(tmpDir, options = {}) {
       ),
     );
   }
+  if (options.extraDistFile) {
+    writeFileSync(join(tmpDir, 'dist', 'marker.txt'), 'original dist marker\n');
+  }
 
   mkdirSync(join(tmpDir, 'docs'), { recursive: true });
-  writeFileSync(
-    join(tmpDir, 'docs', 'css.md'),
-    options.corruptDocsCss
-      ? 'No cdn link here\n'
-      : '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css" integrity="sha384-old" crossorigin="anonymous">\n',
-  );
+  if (!options.missingDocsCss) {
+    writeFileSync(
+      join(tmpDir, 'docs', 'css.md'),
+      options.corruptDocsCss
+        ? 'No cdn link here\n'
+        : '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css" integrity="sha384-old" crossorigin="anonymous">\n',
+    );
+  }
 
-  const secContent = `<link\r\n  rel="stylesheet"\r\n  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css"\r\n  integrity="sha384-old"\r\n  crossorigin="anonymous"\r\n/>\r\n`;
-  writeFileSync(join(tmpDir, 'SECURITY.md'), secContent);
+  if (!options.missingSec) {
+    const secContent = `<link\r\n  rel="stylesheet"\r\n  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css"\r\n  integrity="sha384-old"\r\n  crossorigin="anonymous"\r\n/>\r\n`;
+    writeFileSync(join(tmpDir, 'SECURITY.md'), secContent);
+  }
 
-  const contribContent = `<link\n  rel="stylesheet"\n  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css"\n  integrity="sha384-old"\n  crossorigin="anonymous"\n/>\n`;
-  writeFileSync(join(tmpDir, 'CONTRIBUTING.md'), contribContent);
+  if (!options.missingContrib) {
+    const contribContent = `<link\n  rel="stylesheet"\n  href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.1.0/dist/css/tol.css"\n  integrity="sha384-old"\n  crossorigin="anonymous"\n/>\n`;
+    writeFileSync(join(tmpDir, 'CONTRIBUTING.md'), contribContent);
+  }
 }
 
 test('syncVersion rewrites manifests and docs with runGenerate: false and preserves EOL', () => {
@@ -205,13 +263,21 @@ test('syncVersion rewrites manifests and docs with runGenerate: false and preser
   }
 });
 
-test('syncVersion fails closed on invalid date format', () => {
+test('syncVersion fails closed on invalid date format or impossible calendar dates', () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-date-'));
   try {
     createFixture(tmpDir);
     assert.throws(
       () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026/11/12' }),
       /Invalid date format/,
+    );
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-13-45' }),
+      /Invalid date format.*Expected valid calendar YYYY-MM-DD/,
+    );
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-02-29' }),
+      /Invalid date format.*Expected valid calendar YYYY-MM-DD/,
     );
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -233,16 +299,76 @@ test('syncVersion fails closed before mutation when doc regex fails to match', (
   }
 });
 
-test('syncVersion rolls back all mutations atomically if a failure occurs during execution', () => {
+test('syncVersion fails closed upfront before mutation when a required doc file is missing', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-missing-doc-'));
+  try {
+    createFixture(tmpDir, { missingDocsCss: true });
+    const originalPkg = readFileSync(join(tmpDir, 'package.json'), 'utf8');
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
+      /Missing documentation file at .*docs.*css\.md/,
+    );
+    assert.equal(readFileSync(join(tmpDir, 'package.json'), 'utf8'), originalPkg);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('syncVersion fails closed upfront before mutation when pyproject.toml is malformed', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-bad-py-'));
+  try {
+    createFixture(tmpDir, { corruptPyTomlVersion: true });
+    const originalPkg = readFileSync(join(tmpDir, 'package.json'), 'utf8');
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
+      /Failed to match version field in .*pyproject\.toml/,
+    );
+    assert.equal(readFileSync(join(tmpDir, 'package.json'), 'utf8'), originalPkg);
+
+    // Corrupt classifier
+    createFixture(tmpDir, { corruptPyTomlClassifier: true });
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
+      /Failed to match Development Status classifier in .*pyproject\.toml/,
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('syncVersion fails closed upfront before mutation when CITATION.cff is malformed', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-bad-cff-'));
+  try {
+    createFixture(tmpDir, { corruptCffVersion: true });
+    const originalPkg = readFileSync(join(tmpDir, 'package.json'), 'utf8');
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
+      /Failed to match version field in .*CITATION\.cff/,
+    );
+    assert.equal(readFileSync(join(tmpDir, 'package.json'), 'utf8'), originalPkg);
+
+    // Corrupt date-released
+    createFixture(tmpDir, { corruptCffDate: true });
+    assert.throws(
+      () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
+      /Failed to match date-released field in .*CITATION\.cff/,
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('syncVersion rolls back all mutations atomically if a failure occurs during execution, including dist/ restoration', () => {
   const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-rollback-'));
   try {
     // Missing dist/sri.json triggers failure after manifests are modified
-    createFixture(tmpDir, { sri: false });
+    createFixture(tmpDir, { sri: false, extraDistFile: true });
 
     const originalPkg = readFileSync(join(tmpDir, 'package.json'), 'utf8');
     const originalLock = readFileSync(join(tmpDir, 'package-lock.json'), 'utf8');
     const originalPy = readFileSync(join(tmpDir, 'pyproject.toml'), 'utf8');
     const originalCff = readFileSync(join(tmpDir, 'CITATION.cff'), 'utf8');
+    const originalMarker = readFileSync(join(tmpDir, 'dist', 'marker.txt'), 'utf8');
 
     assert.throws(
       () => syncVersion('1.0.0', { rootDir: tmpDir, runGenerate: false, date: '2026-11-12' }),
@@ -254,6 +380,7 @@ test('syncVersion rolls back all mutations atomically if a failure occurs during
     assert.equal(readFileSync(join(tmpDir, 'package-lock.json'), 'utf8'), originalLock);
     assert.equal(readFileSync(join(tmpDir, 'pyproject.toml'), 'utf8'), originalPy);
     assert.equal(readFileSync(join(tmpDir, 'CITATION.cff'), 'utf8'), originalCff);
+    assert.equal(readFileSync(join(tmpDir, 'dist', 'marker.txt'), 'utf8'), originalMarker);
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
