@@ -353,3 +353,23 @@ print("OK")
   const stdout = runPython(pyScript);
   assert.equal(stdout.trim(), 'OK');
 });
+
+test('generatePyModule validates version option strictly and fails closed on invalid formats or injections', () => {
+  // Valid SemVer mapping to PEP 440
+  const pySemver = generatePyModule(undefined, { version: '1.2.3-alpha.4' });
+  assert.match(pySemver, /^__version__\s*=\s*'1\.2\.3a4'/m);
+
+  // Valid PEP 440 directly
+  const pyPep = generatePyModule(undefined, { version: '2.0.0rc1' });
+  assert.match(pyPep, /^__version__\s*=\s*'2\.0\.0rc1'/m);
+
+  // Fail-closed rejection of non-string
+  assert.throws(() => generatePyModule(undefined, { version: 123 }), /must be a string/);
+  assert.throws(() => generatePyModule(undefined, { version: {} }), /must be a string/);
+
+  // Fail-closed rejection of injections and invalid formats
+  assert.throws(() => generatePyModule(undefined, { version: "1.0.0'\nimport os" }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: '1.0.0-invalid' }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: 'v1.0.0' }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: '' }), /Invalid version option/);
+});

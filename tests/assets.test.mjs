@@ -14,6 +14,7 @@ import {
   MAX_ZIP_ENTRIES,
 } from '../tools/zip-util.mjs';
 import { packageAllAssets, generateSriManifest } from '../tools/package-assets.mjs';
+import { DOC_FILES, DOC_LINK_REGEX } from '../tools/sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const schemes = loadSchemes().map((x) => x.data);
@@ -318,14 +319,11 @@ test('documentation SRI digests in docs/css.md, SECURITY.md, and CONTRIBUTING.md
   const tolCssIntegrity = sri.files?.['dist/css/tol.css']?.integrity;
   assert.ok(tolCssIntegrity, 'dist/sri.json must contain dist/css/tol.css integrity');
 
-  const docFiles = ['docs/css.md', 'SECURITY.md', 'CONTRIBUTING.md'];
-  const docLinkRegex = /<link[\s\S]*?href="https:\/\/cdn\.jsdelivr\.net\/npm\/@kidthales\/tol-palettes@([^/"]+)\/dist\/css\/tol\.css"[\s\S]*?integrity="([^"]+)"/;
-
-  for (const docRel of docFiles) {
+  for (const docRel of DOC_FILES) {
     const docPath = join(root, docRel);
     assert.ok(existsSync(docPath), `${docRel} must exist`);
     const content = readFileSync(docPath, 'utf8');
-    const match = content.match(docLinkRegex);
+    const match = content.match(DOC_LINK_REGEX);
     assert.ok(match, `${docRel} must contain pinned @<version> tol.css link with integrity`);
     assert.equal(match[1], pkg.version, `${docRel} pinned version must match package.json version`);
     assert.equal(match[2], tolCssIntegrity, `${docRel} integrity must match dist/sri.json tol.css integrity`);

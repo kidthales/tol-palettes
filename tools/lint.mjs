@@ -14,7 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
-import { semverToPep440 } from './sync-version.mjs';
+import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const errors = [];
@@ -237,7 +237,7 @@ if (expectedPep440) {
     errors.push('[version] Missing dist/py/tol_palettes.py');
   } else {
     const pyDist = readFileSync(pyDistPath, 'utf8');
-    const pyDistMatch = pyDist.match(/^__version__\s*=\s*['"]([^'"]+)['']/m);
+    const pyDistMatch = pyDist.match(/^__version__\s*=\s*['"]([^'"]+)['"]/m);
     if (!pyDistMatch) {
       errors.push('[version] dist/py/tol_palettes.py missing __version__ declaration');
     } else if (pyDistMatch[1] !== expectedPep440) {
@@ -317,22 +317,9 @@ if (!existsSync(sumsPath)) {
   }
 
   if (expectedStandaloneAssets.size === 0) {
-    const fallbackAssets = [
-      { name: 'LICENSE', path: 'LICENSE' },
-      { name: 'NOTICE', path: 'NOTICE' },
-      { name: 'index.js', path: 'dist/js/index.js' },
-      { name: 'manifest.json', path: 'dist/manifest.json' },
-      { name: 'schemes.json', path: 'dist/json/schemes.json' },
-      { name: 'sri.json', path: 'dist/sri.json' },
-      { name: 'tol-palettes-aseprite.zip', path: 'dist/assets/tol-palettes-aseprite.zip' },
-      { name: 'tol-palettes-godot.zip', path: 'dist/assets/tol-palettes-godot.zip' },
-      { name: 'tol-palettes-gpl.zip', path: 'dist/assets/tol-palettes-gpl.zip' },
-      { name: 'tol.css', path: 'dist/css/tol.css' },
-      { name: 'tol_palettes.py', path: 'dist/py/tol_palettes.py' },
-    ];
-    for (const item of fallbackAssets) {
-      expectedStandaloneAssets.set(item.name, item.path);
-    }
+    errors.push(
+      '[checksums] Failed to parse standalone upload assets from .github/workflows/release.yml (expected release upload block with --clobber)',
+    );
   }
 
   for (const [name, relPath] of expectedStandaloneAssets) {
@@ -382,22 +369,14 @@ if (existsSync(tolCssFile) && tolCssIntegrity) {
   }
 }
 
-const docFiles = [
-  'docs/css.md',
-  'SECURITY.md',
-  'CONTRIBUTING.md',
-];
-
-const docLinkRegex = /<link[\s\S]*?href="https:\/\/cdn\.jsdelivr\.net\/npm\/@kidthales\/tol-palettes@([^/"]+)\/dist\/css\/tol\.css"[\s\S]*?integrity="([^"]+)"/;
-
-for (const docRel of docFiles) {
+for (const docRel of DOC_FILES) {
   const docPath = join(root, docRel);
   if (!existsSync(docPath)) {
     errors.push(`[doc-sri] Missing documentation file: ${docRel}`);
     continue;
   }
   const content = readFileSync(docPath, 'utf8');
-  const match = content.match(docLinkRegex);
+  const match = content.match(DOC_LINK_REGEX);
   if (!match) {
     errors.push(`[doc-sri] ${docRel} missing pinned @<version> tol.css link with integrity attribute`);
     continue;

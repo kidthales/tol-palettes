@@ -189,21 +189,3 @@ test('release.yml workflow enforces tag-guard parity and uploads valid asset pat
   // Ensure build provenance attestation is present and pinned to commit SHA
   assert.match(releaseYml, /uses:\s+actions\/attest@[0-9a-fA-F]{40}/);
 });
-
-test('documentation SRI links in docs/css.md, SECURITY.md, and CONTRIBUTING.md match dist/sri.json and package.json', () => {
-  const pkgVer = pkg.version;
-  const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
-  const tolCssIntegrity = sri.files?.['dist/css/tol.css']?.integrity;
-  assert.ok(tolCssIntegrity, 'dist/sri.json must contain dist/css/tol.css integrity');
-
-  const docFiles = ['docs/css.md', 'SECURITY.md', 'CONTRIBUTING.md'];
-  const docLinkRegex = /<link[\s\S]*?href="https:\/\/cdn\.jsdelivr\.net\/npm\/@kidthales\/tol-palettes@([^/"]+)\/dist\/css\/tol\.css"[\s\S]*?integrity="([^"]+)"/;
-
-  for (const docRel of docFiles) {
-    const content = readFileSync(join(root, docRel), 'utf8');
-    const match = content.match(docLinkRegex);
-    assert.ok(match, `${docRel} must contain pinned @<version> tol.css link with integrity`);
-    assert.equal(match[1], pkgVer, `${docRel} pinned version must match package.json version`);
-    assert.equal(match[2], tolCssIntegrity, `${docRel} integrity must match dist/sri.json tol.css integrity`);
-  }
-});

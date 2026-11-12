@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
 import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
-import { semverToPep440, SEMVER_REGEX } from './sync-version.mjs';
+import { semverToPep440, SEMVER_REGEX, PEP440_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,8 +76,19 @@ function pyRepr(val, indent = 0) {
 
 export function generatePyModule(schemes = loadSchemes().map((x) => x.data), options = {}) {
   let version;
-  if (options.version) {
-    version = SEMVER_REGEX.test(options.version) ? semverToPep440(options.version) : options.version;
+  if (options.version !== undefined && options.version !== null) {
+    if (typeof options.version !== 'string') {
+      throw new RangeError(`Invalid version option: must be a string, got ${typeof options.version}`);
+    }
+    if (SEMVER_REGEX.test(options.version)) {
+      version = semverToPep440(options.version);
+    } else if (PEP440_REGEX.test(options.version)) {
+      version = options.version;
+    } else {
+      throw new RangeError(
+        `Invalid version option: "${options.version}". Expected valid SemVer (e.g. 1.0.0-alpha.1) or PEP 440 (e.g. 1.0.0a1).`,
+      );
+    }
   } else {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     version = semverToPep440(pkg.version);
