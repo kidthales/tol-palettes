@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from '../tools/validate.mjs';
@@ -288,5 +288,46 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
     assert.match(sha, /^[0-9a-f]{64}$/);
     const actualSha = createHash('sha256').update(readFileSync(item.file)).digest('hex');
     assert.equal(sha, actualSha, `Hash mismatch for ${item.name} in SHA256SUMS.txt`);
+  }
+
+  // Cross-reference with .github/workflows/release.yml standalone uploads
+  const releaseYmlPath = join(root, '.github', 'workflows', 'release.yml');
+  if (existsSync(releaseYmlPath)) {
+    const releaseYml = readFileSync(releaseYmlPath, 'utf8');
+    const uploadMatch = releaseYml.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+    assert.ok(uploadMatch, 'release.yml must upload assets');
+    const uploadedBases = uploadMatch[1]
+      .split(/\r?\n/)
+      .map((l) => l.trim().replace(/\\$/, '').trim())
+      .filter(Boolean)
+      .map((p) => basename(p))
+      .filter((b) => b !== 'SHA256SUMS.txt');
+
+    const sumsBases = lines.map((l) => l.trim().split(/\s+/)[1]);
+    assert.deepEqual(
+      sumsBases.sort(),
+      uploadedBases.sort(),
+      'dist/SHA256SUMS.txt entries must match release.yml standalone uploads exactly',
+    );
+  }
+});
+
+test('documentation SRI digests in docs/css.md, SECURITY.md, and CONTRIBUTING.md match dist/sri.json and package.json', () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
+  const tolCssIntegrity = sri.files?.['dist/css/tol.css']?.integrity;
+  assert.ok(tolCssIntegrity, 'dist/sri.json must contain dist/css/tol.css integrity');
+
+  const docFiles = ['docs/css.md', 'SECURITY.md', 'CONTRIBUTING.md'];
+  const docLinkRegex = /<link[\s\S]*?href="https:\/\/cdn\.jsdelivr\.net\/npm\/@kidthales\/tol-palettes@([^/"]+)\/dist\/css\/tol\.css"[\s\S]*?integrity="([^"]+)"/;
+
+  for (const docRel of docFiles) {
+    const docPath = join(root, docRel);
+    assert.ok(existsSync(docPath), `${docRel} must exist`);
+    const content = readFileSync(docPath, 'utf8');
+    const match = content.match(docLinkRegex);
+    assert.ok(match, `${docRel} must contain pinned @<version> tol.css link with integrity`);
+    assert.equal(match[1], pkg.version, `${docRel} pinned version must match package.json version`);
+    assert.equal(match[2], tolCssIntegrity, `${docRel} integrity must match dist/sri.json tol.css integrity`);
   }
 });
