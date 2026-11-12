@@ -2,6 +2,10 @@
   "name": "@kidthales/tol-palettes",
   "version": "0.3.1",
   "artifacts": {
+    "index.js": {
+      "sha256": "9940673e780a0c773881c84af70154c8263b4375c6a8b7f49d35b050f70c75cc",
+      "size_bytes": 29590
+    },
     "schemes.json": {
       "sha256": "79ab30cdbae861568304d7b1aaa4fdc720eef14f328299794622ce7536dbc5ea",
       "size_bytes": 29456
@@ -27,8 +31,8 @@
       "size_bytes": 25385
     },
     "tol_palettes.py": {
-      "sha256": "0b6ac7884d118cb60f098dfdfe1a7f3c2c37cd8817c0c2f8632d138310254a21",
-      "size_bytes": 28073
+      "sha256": "ec3c083a5eaf93d2a30e7ff807212a95c8ceed671459f849b6625ba5dfc2d1d9",
+      "size_bytes": 28115
     }
   }
 }

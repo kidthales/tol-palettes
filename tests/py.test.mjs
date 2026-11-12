@@ -328,3 +328,28 @@ print("OK")
   const stdout = runPython(pyScript);
   assert.equal(stdout.trim(), 'OK');
 });
+
+test('tol_palettes.py exports PEP 440 __version__ and registers it in __all__', () => {
+  const content = readFileSync(pyPath, 'utf8');
+  const pyToml = readFileSync(join(root, 'pyproject.toml'), 'utf8');
+  const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
+  assert.ok(pyMatch, 'pyproject.toml must define version');
+  const expectedPep440 = pyMatch[1];
+
+  assert.match(content, new RegExp(`^__version__\\s*=\\s*['"]${expectedPep440}['"]`, 'm'));
+  assert.match(content, /'__version__'/);
+
+  const pyScript = `
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(r"${pyPath}").parent))
+import tol_palettes as tp
+
+assert hasattr(tp, '__version__'), "tol_palettes must export __version__"
+assert tp.__version__ == '${expectedPep440}', f"Version mismatch: {tp.__version__} != ${expectedPep440}"
+assert '__version__' in tp.__all__, "__version__ must be listed in __all__"
+print("OK")
+`;
+  const stdout = runPython(pyScript);
+  assert.equal(stdout.trim(), 'OK');
+});

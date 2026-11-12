@@ -148,6 +148,7 @@ export function packageAllAssets(opts = {}) {
   const schemesJsonPath = join(targetDist, 'json', 'schemes.json');
   const tolCssPath = join(targetDist, 'css', 'tol.css');
   const tolPyPath = join(targetDist, 'py', 'tol_palettes.py');
+  const indexJsPath = join(targetDist, 'js', 'index.js');
 
   if (!existsSync(schemesJsonPath)) {
     throw new Error(`Required asset not found: ${schemesJsonPath}. Run npm run generate:js first.`);
@@ -158,12 +159,16 @@ export function packageAllAssets(opts = {}) {
   if (!existsSync(tolPyPath)) {
     throw new Error(`Required asset not found: ${tolPyPath}. Run npm run generate:py first.`);
   }
+  if (!existsSync(indexJsPath)) {
+    throw new Error(`Required asset not found: ${indexJsPath}. Run npm run generate:js first.`);
+  }
 
   const licenseBuf = Buffer.from(readFileSync(licensePath, 'utf8').replace(/\r\n/g, '\n'), 'utf8');
   const noticeBuf = Buffer.from(readFileSync(noticePath, 'utf8').replace(/\r\n/g, '\n'), 'utf8');
   const schemesJsonBuf = readFileSync(schemesJsonPath);
   const tolCssBuf = readFileSync(tolCssPath);
   const tolPyBuf = readFileSync(tolPyPath);
+  const indexJsBuf = readFileSync(indexJsPath);
 
   // 1. Godot addon zip (interior root: addons/tol_palettes/...)
   const godotEntries = collectDirectoryEntries(godotAddonDir, 'addons/tol_palettes', { mtime: effectiveMtime });
@@ -220,6 +225,7 @@ export function packageAllAssets(opts = {}) {
 
   // 5. Generate dist/manifest.json
   const artifactSources = [
+    { name: 'index.js', buf: indexJsBuf },
     { name: 'schemes.json', buf: schemesJsonBuf },
     { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },
     { name: 'tol-palettes-aseprite.zip', buf: asepriteZip },
@@ -249,10 +255,11 @@ export function packageAllAssets(opts = {}) {
 
   // 6. Generate dist/SHA256SUMS.txt
   // Covering all release assets uploaded to GitHub Release and CDN:
-  // tol-palettes-{godot,aseprite,gpl}.zip, schemes.json, tol.css, tol_palettes.py, LICENSE, NOTICE, manifest.json, sri.json
+  // tol-palettes-{godot,aseprite,gpl}.zip, index.js, schemes.json, tol.css, tol_palettes.py, LICENSE, NOTICE, manifest.json, sri.json
   const releaseAssets = [
     { name: 'LICENSE', buf: licenseBuf },
     { name: 'NOTICE', buf: noticeBuf },
+    { name: 'index.js', buf: indexJsBuf },
     { name: 'manifest.json', buf: Buffer.from(manifestJson, 'utf8') },
     { name: 'schemes.json', buf: schemesJsonBuf },
     { name: 'sri.json', buf: Buffer.from(sriJson, 'utf8') },

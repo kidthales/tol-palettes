@@ -251,6 +251,7 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
   assert.equal(manifest.name, '@kidthales/tol-palettes');
   assert.ok(typeof manifest.version === 'string');
   assert.ok(manifest.artifacts && typeof manifest.artifacts === 'object');
+  assert.ok(manifest.artifacts['index.js'], 'dist/manifest.json must contain index.js');
   for (const [name, meta] of Object.entries(manifest.artifacts)) {
     assert.match(meta.sha256, /^[0-9a-f]{64}$/);
     assert.ok(typeof meta.size_bytes === 'number' && meta.size_bytes > 0);
@@ -263,6 +264,7 @@ test('dist/sri.json, dist/manifest.json, and dist/SHA256SUMS.txt integrity', () 
   const expectedAssets = [
     { name: 'LICENSE', file: join(root, 'LICENSE') },
     { name: 'NOTICE', file: join(root, 'NOTICE') },
+    { name: 'index.js', file: join(root, 'dist', 'js', 'index.js') },
     { name: 'manifest.json', file: manifestPath },
     { name: 'schemes.json', file: join(root, 'dist', 'json', 'schemes.json') },
     { name: 'sri.json', file: sriPath },

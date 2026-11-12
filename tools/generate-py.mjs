@@ -1,11 +1,12 @@
 // Generates dist/py/tol_palettes.py from data/schemes/*.json.
 // Provides pure-Python access to all 22 schemes plus matplotlib-compatible
 // tol_cset() and tol_cmap() functions (matplotlib imported lazily on demand).
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
 import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
+import { semverToPep440, SEMVER_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -73,7 +74,15 @@ function pyRepr(val, indent = 0) {
   return String(val);
 }
 
-export function generatePyModule(schemes = loadSchemes().map((x) => x.data)) {
+export function generatePyModule(schemes = loadSchemes().map((x) => x.data), options = {}) {
+  let version;
+  if (options.version) {
+    version = SEMVER_REGEX.test(options.version) ? semverToPep440(options.version) : options.version;
+  } else {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    version = semverToPep440(pkg.version);
+  }
+
   const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const byId = Object.fromEntries(sorted.map((s) => [s.id, s]));
 
@@ -159,7 +168,10 @@ export function generatePyModule(schemes = loadSchemes().map((x) => x.data)) {
   return `${PY_HEADER}
 from collections import namedtuple
 
+__version__ = '${version}'
+
 __all__ = [
+    '__version__',
     'SCHEMES',
     'OFFICIAL_CSET_NAMES',
     'CSET_NAMES',
@@ -296,7 +308,7 @@ export function generatePy(opts = {}) {
   const pyDir = join(targetDist, 'py');
   rmSync(pyDir, { recursive: true, force: true });
   mkdirSync(pyDir, { recursive: true });
-  writeFileSync(join(pyDir, 'tol_palettes.py'), generatePyModule(schemes));
+  writeFileSync(join(pyDir, 'tol_palettes.py'), generatePyModule(schemes, opts));
   return { pyDir, filePath: join(pyDir, 'tol_palettes.py') };
 }
 
