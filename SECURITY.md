@@ -71,7 +71,7 @@ For web assets loaded from CDNs (e.g. jsDelivr, unpkg), look up the precomputed 
 <link
   rel="stylesheet"
   href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@0.3.1/dist/css/tol.css"
-  integrity="sha384-..."
+  integrity="sha384-3g0jAZKNIK2KxgHMBn+Qo9PTuGPS6fX4yKZFuIzuy3MEAzYQmiuGIB4EUFNkZaMb"
   crossorigin="anonymous"
 />
 ```

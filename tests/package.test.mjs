@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { semverToPep440 } from '../tools/sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -82,23 +83,53 @@ test('external ESM consumer import and TypeScript declaration integrity', async 
   assert.match(dts, /export declare function interpolate\(/);
 });
 
-test('version parity across package.json, pyproject.toml, CITATION.cff, and plugin.cfg', () => {
+test('8-target version parity across manifests, package locks, and code targets', () => {
   const pkgVer = pkg.version;
+  const expectedPep440 = semverToPep440(pkgVer);
 
+  // 1. package.json already loaded in pkg.version
+  assert.ok(typeof pkgVer === 'string' && pkgVer.length > 0);
+
+  // 2. package-lock.json
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.version, pkgVer, `package-lock.json version ${lock.version} != ${pkgVer}`);
+  assert.equal(
+    lock.packages?.['']?.version,
+    pkgVer,
+    `package-lock.json packages[""].version ${lock.packages?.['']?.version} != ${pkgVer}`,
+  );
+
+  // 3. pyproject.toml
   const pyToml = readFileSync(join(root, 'pyproject.toml'), 'utf8');
   const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
   assert.ok(pyMatch, 'pyproject.toml must define version');
-  assert.equal(pyMatch[1], pkgVer, `pyproject.toml version ${pyMatch[1]} != ${pkgVer}`);
+  assert.equal(pyMatch[1], expectedPep440, `pyproject.toml version ${pyMatch[1]} != ${expectedPep440}`);
 
+  // 4. CITATION.cff
   const cff = readFileSync(join(root, 'CITATION.cff'), 'utf8');
   const cffMatch = cff.match(/^version:\s*([^\s\r\n]+)/m);
   assert.ok(cffMatch, 'CITATION.cff must define version');
   assert.equal(cffMatch[1], pkgVer, `CITATION.cff version ${cffMatch[1]} != ${pkgVer}`);
 
+  // 5. dist/godot/addons/tol_palettes/plugin.cfg
   const godotCfg = readFileSync(join(root, 'dist', 'godot', 'addons', 'tol_palettes', 'plugin.cfg'), 'utf8');
   const godotMatch = godotCfg.match(/^version="([^"]+)"/m);
   assert.ok(godotMatch, 'plugin.cfg must define version');
   assert.equal(godotMatch[1], pkgVer, `plugin.cfg version ${godotMatch[1]} != ${pkgVer}`);
+
+  // 6. dist/py/tol_palettes.py
+  const pyDist = readFileSync(join(root, 'dist', 'py', 'tol_palettes.py'), 'utf8');
+  const pyDistMatch = pyDist.match(/^__version__\s*=\s*['"]([^'"]+)['"]/m);
+  assert.ok(pyDistMatch, 'dist/py/tol_palettes.py must define __version__');
+  assert.equal(pyDistMatch[1], expectedPep440, `tol_palettes.py __version__ ${pyDistMatch[1]} != ${expectedPep440}`);
+
+  // 7. dist/sri.json
+  const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
+  assert.equal(sri.version, pkgVer, `dist/sri.json version ${sri.version} != ${pkgVer}`);
+
+  // 8. dist/manifest.json
+  const manifest = JSON.parse(readFileSync(join(root, 'dist', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.version, pkgVer, `dist/manifest.json version ${manifest.version} != ${pkgVer}`);
 });
 
 test('release.yml workflow enforces tag-guard parity and uploads valid asset paths', () => {
@@ -136,6 +167,24 @@ test('release.yml workflow enforces tag-guard parity and uploads valid asset pat
   assert.ok(lines.includes('dist/py/tol_palettes.py'), 'Must upload dist/py/tol_palettes.py');
   assert.ok(lines.includes('LICENSE'), 'Must upload LICENSE');
   assert.ok(lines.includes('NOTICE'), 'Must upload NOTICE');
+
+  // Verify SHA256SUMS.txt coverage of standalone uploads
+  const sumsText = readFileSync(join(root, 'dist', 'SHA256SUMS.txt'), 'utf8');
+  const sumLines = sumsText.trim().split(/\r?\n/);
+  const sumFileNames = new Set(sumLines.map((l) => l.trim().split(/\s+/)[1]));
+
+  const uploadedStandaloneBases = lines
+    .map((p) => basename(p))
+    .filter((b) => b !== 'SHA256SUMS.txt');
+
+  for (const base of uploadedStandaloneBases) {
+    assert.ok(sumFileNames.has(base), `Uploaded standalone asset ${base} must be listed in dist/SHA256SUMS.txt`);
+  }
+  assert.equal(
+    sumFileNames.size,
+    uploadedStandaloneBases.length,
+    'dist/SHA256SUMS.txt entry count must equal release.yml standalone upload count',
+  );
 
   // Ensure build provenance attestation is present and pinned to commit SHA
   assert.match(releaseYml, /uses:\s+actions\/attest@[0-9a-fA-F]{40}/);
