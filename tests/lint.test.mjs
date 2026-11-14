@@ -44,6 +44,74 @@ test('auditPackageExports passes for valid schema export and fails closed on mis
   });
 });
 
+test('auditPackageExports handles null subpath restrictions, nested conditional exports, and rejects out-of-root targets', () => {
+  withTempRoot((dir) => {
+    mkdirSync(join(dir, 'schema'), { recursive: true });
+    mkdirSync(join(dir, 'dist', 'js'), { recursive: true });
+    writeFileSync(join(dir, 'schema', 'scheme.schema.json'), '{}', 'utf8');
+    writeFileSync(join(dir, 'dist', 'js', 'index.js'), '', 'utf8');
+    writeFileSync(join(dir, 'dist', 'js', 'index.d.ts'), '', 'utf8');
+
+    // Valid null subpath restriction + nested conditional exports + fallback array
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          '.': {
+            import: {
+              types: './dist/js/index.d.ts',
+              default: './dist/js/index.js',
+            },
+          },
+          './fallback': ['./dist/js/index.js', null],
+          './internal/*': null,
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+
+    // Nested missing target inside conditional export map
+    const nestedMissingErrors = auditPackageExports(dir, {
+      exports: {
+        '.': {
+          import: {
+            types: './dist/js/missing.d.ts',
+            default: './dist/js/index.js',
+          },
+        },
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.ok(
+      nestedMissingErrors.some((e) => e.includes('./dist/js/missing.d.ts') && e.includes('does not exist on disk')),
+      `Expected missing nested target error, got: ${JSON.stringify(nestedMissingErrors)}`,
+    );
+
+    // Target omitting leading "./" prefix (direct ../ traversal)
+    const missingPrefixErrors = auditPackageExports(dir, {
+      exports: {
+        './escape': '../outside.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.ok(
+      missingPrefixErrors.some((e) => e.includes('must start with "./"')),
+      `Expected "./" prefix error, got: ${JSON.stringify(missingPrefixErrors)}`,
+    );
+
+    // Target starting with "./" that escapes package root via "../"
+    const outOfRootErrors = auditPackageExports(dir, {
+      exports: {
+        './escape-dot': './dist/../../outside.js',
+        './escape-glob': './../outside/*',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(outOfRootErrors.length, 2, `Expected 2 out-of-root errors, got: ${JSON.stringify(outOfRootErrors)}`);
+    assert.ok(outOfRootErrors.every((e) => e.includes('resolves outside package root')));
+  });
+});
+
 test('auditHostedSchema passes on matching $id/bytes and fails closed without crashing on missing or mismatched schemas', () => {
   withTempRoot((dir) => {
     const srcDir = join(dir, 'schema');
@@ -90,5 +158,13 @@ test('auditHostedSchema passes on matching $id/bytes and fails closed without cr
     const missingSrcErrors = auditHostedSchema(dir);
     assert.equal(missingSrcErrors.length, 1);
     assert.match(missingSrcErrors[0], /Failed to parse schema\/scheme\.schema\.json/);
+
+    // Directory-corrupted gallerySchemaPath (must record [gallery] EISDIR diagnostic instead of throwing)
+    writeFileSync(srcPath, validSchema, 'utf8');
+    rmSync(galleryPath);
+    mkdirSync(galleryPath);
+    const eisdirErrors = auditHostedSchema(dir);
+    assert.equal(eisdirErrors.length, 1);
+    assert.match(eisdirErrors[0], /^\[gallery\] Failed to read dist\/gallery\/schema\/scheme\.schema\.json: .*EISDIR/);
   });
 });
