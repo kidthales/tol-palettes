@@ -721,6 +721,56 @@ jobs:
     assert.ok(missingOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
     assert.ok(missingOut.includes('Workflows directory not found'));
   });
+
+  // Multiple invalid uses: targets across files must all be reported before throwing
+  withTempFixture(
+    {
+      'multi_a.yml': `name: MultiA
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: $/.github/workflows/ci.yml
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: ../local-action
+      - uses: ./.github/actions/my-action@main
+`,
+      'multi_b.yml': `name: MultiB
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: docker://alpine:latest
+      - uses: actions/checkout@v4
+`,
+    },
+    (multiDir) => {
+      const multiRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', multiDir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(multiRes.status, 0, 'Expected multi-violation fixture to fail closed under -Gate1Only');
+      const multiOut = (multiRes.stdout || '') + (multiRes.stderr || '');
+      assert.ok(multiOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(multiOut.includes("'$' prefix is invalid"));
+      assert.ok(multiOut.includes("must start with './'"));
+      assert.ok(multiOut.includes('must not specify an @ref'));
+      assert.ok(multiOut.includes('must pin to @sha256 digest'));
+      assert.ok(multiOut.includes('must pin to 40-char commit SHA'));
+      assert.ok(multiOut.includes('Gate 1 Failed: GitHub Actions commit SHA pin verification failed.'));
+    },
+  );
 });
 
 test('auditWorkflows fails when actions/checkout is missing persist-credentials: false', () => {
