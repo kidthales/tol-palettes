@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
@@ -19,16 +19,57 @@ import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXPECTED_SCHEMA_ID = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
 
+function isWithinRoot(resolvedRoot, candidate) {
+  const rel = relative(resolvedRoot, candidate);
+  return !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
+}
+
+function auditExportNode(subpath, node, resolvedRoot, errors) {
+  if (node === null) {
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      auditExportNode(subpath, item, resolvedRoot, errors);
+    }
+    return;
+  }
+  if (typeof node === 'object') {
+    for (const value of Object.values(node)) {
+      auditExportNode(subpath, value, resolvedRoot, errors);
+    }
+    return;
+  }
+  if (typeof node !== 'string') {
+    errors.push(`[exports] Export "${subpath}" has invalid target "${String(node)}".`);
+    return;
+  }
+  if (!node.startsWith('./')) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must start with "./".`);
+    return;
+  }
+  const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
+  const checkPath = node.includes('*') ? node.replace(/\/?\*.*$/, '') : node;
+  const resolvedCheckPath = resolve(resolvedRoot, checkPath);
+  if (!isWithinRoot(resolvedRoot, wildcardSamplePath) || !isWithinRoot(resolvedRoot, resolvedCheckPath)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
+    return;
+  }
+  if (!existsSync(resolvedCheckPath)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
+  }
+}
+
 export function auditPackageExports(targetRoot, pkg) {
   const errors = [];
-  for (const [subpath, target] of Object.entries(pkg?.exports ?? {})) {
-    const targets = typeof target === 'string' ? [target] : Object.values(target);
-    for (const t of targets) {
-      const checkPath = t.includes('*') ? t.replace(/\/?\*.*$/, '') : t;
-      if (!existsSync(join(targetRoot, checkPath))) {
-        errors.push(`[exports] Export "${subpath}" target "${t}" does not exist on disk.`);
-      }
+  const resolvedRoot = resolve(targetRoot);
+  const exportsField = pkg?.exports;
+  if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
+    for (const [subpath, target] of Object.entries(exportsField)) {
+      auditExportNode(subpath, target, resolvedRoot, errors);
     }
+  } else if (exportsField !== undefined && exportsField !== null) {
+    auditExportNode('.', exportsField, resolvedRoot, errors);
   }
   if (pkg?.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
     errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
