@@ -146,10 +146,13 @@ test('all third-party actions across all workflow files are pinned to 40-charact
       const match = line.match(/^\s*(?:-\s+)?uses:\s*['"]?([^'"\s#]+)['"]?/);
       if (match) {
         const actionRef = match[1];
+        assert.ok(
+          !actionRef.startsWith('$'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not start with "$" (use "./" for same-repository references)`,
+        );
         if (
           actionRef.startsWith('./') ||
           actionRef.startsWith('../') ||
-          actionRef.startsWith('$/') ||
           actionRef.startsWith('docker://')
         ) {
           continue;
@@ -480,21 +483,21 @@ jobs:
   );
 });
 
-test('auditWorkflows and ci-local.ps1 reject $/ workflow targets with @ref and $/ in steps', () => {
+test('auditWorkflows and ci-local.ps1 reject any uses: starting with $ and ./ reusable workflows with @ref', () => {
   withTempFixture(
     {
-      'dollar_ref.yml': `name: DollarRef
+      'dollar_job.yml': `name: DollarJob
 permissions:
   contents: read
 jobs:
   call:
-    uses: $/.github/workflows/ci.yml@main
+    uses: $/.github/workflows/ci.yml
 `,
     },
     (dir) => {
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
-      assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
 
       // Also verify ci-local.ps1 Gate 1 rejects it
       const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', dir], {
@@ -504,7 +507,24 @@ jobs:
       });
       assert.notEqual(psRes.status, 0);
       const combined = (psRes.stdout || '') + (psRes.stderr || '');
-      assert.ok(combined.includes("same-repository workflow references must not specify an @ref"));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_ref.yml': `name: LocalRef
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: ./.github/workflows/ci.yml@main
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
     },
   );
 
@@ -527,7 +547,7 @@ jobs:
     (dir) => {
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
-      assert.ok(res.violations.some((v) => v.includes("only valid for reusable workflow calls at job level")));
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
     },
   );
 });
@@ -834,7 +854,7 @@ jobs:
       - name: Verify release tag matches project metadata versions
         run: echo no exit
   verify:
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
   attach-assets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -883,7 +903,7 @@ jobs:
         run: exit 1
   verify:
     needs: [tag-guard]
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
   attach-assets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1055,8 +1075,11 @@ test('release.yml locks all actions/checkout steps and verify workflow_call to t
   }
   assert.equal(checkoutCount, 5);
 
-  assert.equal(releaseDoc?.jobs?.verify?.uses, '$/.github/workflows/ci.yml');
+  assert.equal(releaseDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
   assert.equal(releaseDoc?.jobs?.verify?.with?.ref, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+
+  const pagesDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'pages.yml'), 'utf8'));
+  assert.equal(pagesDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
 
   const tagGuardJob = releaseDoc?.jobs?.['tag-guard'];
   assert.equal(tagGuardJob?.outputs?.sha, '${{ steps.verify-tag.outputs.sha }}');

@@ -177,11 +177,9 @@ try {
                     $line = $lines[$i]
                     if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
                         $target = $matches[1]
-                        if ($target -match '^\$/') {
-                            if ($target -match '@') {
-                                Write-Error "Invalid reusable workflow target in $($wf.Name) line $($i+1): $target ('$/' same-repository workflow references must not specify an @ref)"
-                                $UnpinnedFound = $true
-                            }
+                        if ($target -match '^\$') {
+                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('$' prefix is invalid; use './' for same-repository references)"
+                            $UnpinnedFound = $true
                         } elseif ($target -notmatch '^(\./|\.\./|docker://)') {
                             if ($target -notmatch '@[0-9a-fA-F]{40}') {
                                 Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
