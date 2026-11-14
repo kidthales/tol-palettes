@@ -1003,7 +1003,7 @@ test('path-jail: isSameOrSubpath correctly detects subpath relations', () => {
 // Regression tests: CI Python matrix, requirements-ci, & release.yml contracts
 // ---------------------------------------------------------------------------
 
-test('ci.yml spans Python 3.11-3.14 across 4 matrix legs and requirements-ci pins matplotlib==3.11.2', () => {
+test('ci.yml spans Python 3.11-3.14 across 4 matrix legs, forwards optional workflow_call ref, and requirements-ci pins matplotlib==3.11.2', () => {
   const ciDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const include = ciDoc?.jobs?.verify?.strategy?.matrix?.include;
   assert.ok(Array.isArray(include), 'Expected verify.strategy.matrix.include array in ci.yml');
@@ -1012,11 +1012,34 @@ test('ci.yml spans Python 3.11-3.14 across 4 matrix legs and requirements-ci pin
   const pythonVersions = include.map((leg) => String(leg.python)).sort();
   assert.deepEqual(pythonVersions, ['3.11', '3.12', '3.13', '3.14']);
 
+  const refInput = ciDoc?.on?.workflow_call?.inputs?.ref;
+  assert.ok(refInput, 'Expected optional inputs.ref on workflow_call in ci.yml');
+  assert.equal(refInput.type, 'string');
+  assert.equal(refInput.required, false);
+
+  for (const jobId of ['security', 'verify']) {
+    const steps = ciDoc?.jobs?.[jobId]?.steps || [];
+    const checkoutSteps = steps.filter((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'));
+    assert.equal(checkoutSteps.length, 1, `Expected 1 actions/checkout step in ci.yml ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.ref, '${{ inputs.ref }}', `Expected ref: \${{ inputs.ref }} in ci.yml ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.['persist-credentials'], false);
+  }
+
+  const ciLocalContent = readFileSync(scriptPath, 'utf8');
+  assert.ok(
+    ciLocalContent.includes("Install Python 3.11+ and ensure 'python' is on PATH."),
+    'Expected ci-local.ps1 -CI missing-tool hint to match Python 3.11+ floor',
+  );
+  assert.ok(
+    !ciLocalContent.includes('Install Python 3.12+'),
+    'Stale Python 3.12+ floor hint must not remain in ci-local.ps1',
+  );
+
   const reqs = readFileSync(join(root, 'requirements-ci.txt'), 'utf8');
   assert.match(reqs, /^matplotlib==3\.11\.2\s*$/m, 'Expected matplotlib==3.11.2 pin in requirements-ci.txt');
 });
 
-test('release.yml locks all actions/checkout steps to target tag ref and resolves notify tag', () => {
+test('release.yml locks all actions/checkout steps and verify workflow_call to target tag ref, and resolves notify tag + SHA', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
   const expectedRef = '${{ github.event.release.tag_name || inputs.tag || github.ref }}';
   const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
@@ -1032,16 +1055,26 @@ test('release.yml locks all actions/checkout steps to target tag ref and resolve
   }
   assert.equal(checkoutCount, 5);
 
+  assert.equal(releaseDoc?.jobs?.verify?.uses, '$/.github/workflows/ci.yml');
+  assert.equal(releaseDoc?.jobs?.verify?.with?.ref, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+
+  const tagGuardJob = releaseDoc?.jobs?.['tag-guard'];
+  assert.equal(tagGuardJob?.outputs?.sha, '${{ steps.verify-tag.outputs.sha }}');
+  const tgVerifyStep = (tagGuardJob?.steps || []).find((s) => s.name === 'Verify release tag matches project metadata versions');
+  assert.equal(tgVerifyStep?.id, 'verify-tag');
+  assert.match(tgVerifyStep?.run || '', /echo "sha=\$\(git rev-parse HEAD\)" >> "\$GITHUB_OUTPUT"/);
+
   const notifySteps = releaseDoc?.jobs?.notify?.steps || [];
   assert.equal(notifySteps.length, 1);
   const notifyStep = notifySteps[0];
   assert.equal(notifyStep.env?.RELEASE_TAG, '${{ github.event.release.tag_name }}');
   assert.equal(notifyStep.env?.DISPATCH_TAG, '${{ inputs.tag }}');
   assert.equal(notifyStep.env?.REF_NAME, '${{ github.ref_name }}');
+  assert.equal(notifyStep.env?.SHA, '${{ needs.tag-guard.outputs.sha || github.sha }}');
   assert.match(notifyStep.run, /TAG_NAME="\$\{RELEASE_TAG:-\$\{DISPATCH_TAG:-\$REF_NAME\}\}"/);
 });
 
-test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects invalid formats, and checks PEP 440 parity', () => {
+test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects invalid formats, and executes PEP 440 parity check', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
   const tgSteps = releaseDoc?.jobs?.['tag-guard']?.steps || [];
   const verifyStep = tgSteps.find((s) => s.name === 'Verify release tag matches project metadata versions');
@@ -1071,9 +1104,72 @@ test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects 
 
   assert.match(verifyStep.run, /semverToPep440/, 'Expected tag-guard to compute PEP 440 parity via semverToPep440');
   assert.match(verifyStep.run, /pyproject\.toml/, 'Expected tag-guard to verify pyproject.toml version parity');
+
+  const esmMatch = verifyStep.run.match(/EXPECTED_PY_VER=\$\(PKG_VER="\$PKG_VER"\s+node\s+--input-type=module\s+-e\s+"([^"]+)"\)/);
+  assert.ok(esmMatch, 'Expected inline node --input-type=module -e snippet for EXPECTED_PY_VER in tag-guard');
+  const esmScript = esmMatch[1];
+
+  for (const [semver, expectedPep440] of [
+    ['1.0.0-alpha.1', '1.0.0a1'],
+    ['1.0.0-beta.3', '1.0.0b3'],
+    ['1.0.0-rc.2', '1.0.0rc2'],
+    ['1.0.0', '1.0.0'],
+  ]) {
+    const esmRes = spawnSync(process.execPath, ['--input-type=module', '-e', esmScript], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PKG_VER: semver },
+    });
+    assert.equal(esmRes.status, 0, `Expected inline semverToPep440 snippet to succeed for ${semver}: ${esmRes.stderr}`);
+    assert.equal(esmRes.stdout.trim(), expectedPep440);
+  }
+
+  const badEsmRes = spawnSync(process.execPath, ['--input-type=module', '-e', esmScript], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, PKG_VER: '1.0.0-alpha.0' },
+  });
+  assert.notEqual(badEsmRes.status, 0, 'Expected inline semverToPep440 snippet to exit non-zero on invalid SemVer');
+
+  const pyVerMatch = verifyStep.run.match(/PY_VER=\$\(node\s+-p\s+'((?:[^']|'\\'')+)'\)/);
+  assert.ok(pyVerMatch, 'Expected inline node -p snippet for PY_VER extraction in tag-guard');
+  const pyVerScript = pyVerMatch[1].replace(/'\\''/g, "'");
+
+  withTempFixture(
+    {
+      'pyproject.toml': '[project]\nname = "tol-palettes"\nversion = "1.0.0a1"\n',
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.equal(pyRes.status, 0, `Expected PY_VER extraction to succeed: ${pyRes.stderr}`);
+      assert.equal(pyRes.stdout.trim(), '1.0.0a1');
+      assert.notEqual(pyRes.stdout.trim(), '1.0.0b1', 'Mismatched PEP 440 version must be distinguishable');
+    },
+  );
+
+  withTempFixture(
+    {
+      'pyproject.toml': "[project]\nname = 'tol-palettes'\nversion = '1.0.0rc2'\n",
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.equal(pyRes.status, 0, `Expected single-quoted PY_VER extraction to succeed: ${pyRes.stderr}`);
+      assert.equal(pyRes.stdout.trim(), '1.0.0rc2');
+    },
+  );
+
+  withTempFixture(
+    {
+      'pyproject.toml': '[project]\nname = "tol-palettes"\n',
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.notEqual(pyRes.status, 0, 'Expected missing version field in pyproject.toml to exit non-zero');
+    },
+  );
 });
 
-test('release.yml routes prereleases to next dist-tag, enforces skip-existing, git clean guard, and 10-asset attestation', () => {
+test('release.yml routes prereleases to next dist-tag, enforces skip-existing, git clean guard, and 10-asset attestation before upload', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
 
   for (const jobId of ['publish-npm', 'publish-gpr']) {
@@ -1091,12 +1187,21 @@ test('release.yml routes prereleases to next dist-tag, enforces skip-existing, g
   assert.equal(pypiPublish.with?.['skip-existing'], true);
 
   const attachSteps = releaseDoc?.jobs?.['attach-assets']?.steps || [];
-  const genStep = attachSteps.find((s) => s.name === 'Generate game assets and package zip bundles');
-  assert.ok(genStep, 'Expected generate step in attach-assets');
+  const genIdx = attachSteps.findIndex((s) => s.name === 'Generate game assets and package zip bundles');
+  const attestIdx = attachSteps.findIndex((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/attest@'));
+  const uploadIdx = attachSteps.findIndex((s) => s.name === 'Upload release assets to GitHub Release');
+  assert.ok(genIdx !== -1, 'Expected generate step in attach-assets');
+  assert.ok(attestIdx !== -1, 'Expected actions/attest step in attach-assets');
+  assert.ok(uploadIdx !== -1, 'Expected Upload release assets to GitHub Release step in attach-assets');
+  assert.ok(
+    genIdx < attestIdx && attestIdx < uploadIdx,
+    `Expected generate (${genIdx}) -> attest (${attestIdx}) -> upload (${uploadIdx}) step ordering in attach-assets`,
+  );
+
+  const genStep = attachSteps[genIdx];
   assert.match(genStep.run, /test -z "\$\(git status --porcelain\)"/);
 
-  const attestStep = attachSteps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/attest@'));
-  assert.ok(attestStep, 'Expected actions/attest step in attach-assets');
+  const attestStep = attachSteps[attestIdx];
   const subjectLines = String(attestStep.with?.['subject-path'] || '')
     .split(/\r?\n/)
     .map((l) => l.trim())

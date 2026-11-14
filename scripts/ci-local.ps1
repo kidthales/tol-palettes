@@ -98,7 +98,7 @@ if ($CI) {
         @{ Name = "git"; Hint = "Install Git and ensure 'git' is on PATH." },
         @{ Name = "node"; Hint = "Install Node.js 22+ and ensure 'node' is on PATH." },
         @{ Name = "npm"; Hint = "Ensure 'npm' is on PATH." },
-        @{ Name = "python"; Hint = "Install Python 3.12+ and ensure 'python' is on PATH." }
+        @{ Name = "python"; Hint = "Install Python 3.11+ and ensure 'python' is on PATH." }
     )
     foreach ($tool in $requiredTools) {
         if (-not (Get-Command $tool.Name -ErrorAction SilentlyContinue)) {

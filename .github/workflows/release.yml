@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      sha: ${{ steps.verify-tag.outputs.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,11 +40,13 @@ jobs:
           package-manager-cache: false
 
       - name: Verify release tag matches project metadata versions
+        id: verify-tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
         run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           TAG="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           if [ -z "$TAG" ]; then
             echo "::error::No release tag or ref name found."
@@ -88,6 +92,8 @@ jobs:
       contents: read
       security-events: write
     uses: $/.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
 
   publish-npm:
     name: Publish to npm Public Registry
@@ -247,6 +253,20 @@ jobs:
             exit 1
           fi
 
+      - name: Attest Build Provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/assets/*.zip
+            dist/SHA256SUMS.txt
+            dist/manifest.json
+            dist/sri.json
+            dist/css/tol.css
+            dist/js/index.js
+            dist/json/schemes.json
+            dist/py/tol_palettes.py
+          create-storage-record: false
+
       - name: Upload release assets to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -269,20 +289,6 @@ jobs:
             LICENSE \
             NOTICE \
             --clobber
-
-      - name: Attest Build Provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            dist/assets/*.zip
-            dist/SHA256SUMS.txt
-            dist/manifest.json
-            dist/sri.json
-            dist/css/tol.css
-            dist/js/index.js
-            dist/json/schemes.json
-            dist/py/tol_palettes.py
-          create-storage-record: false
 
   notify:
     name: Discord Release Notification
@@ -307,7 +313,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.tag-guard.outputs.sha || github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TAG_NAME="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
