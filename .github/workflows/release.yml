@@ -120,12 +120,16 @@ jobs:
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
+          DIST_TAG="latest"
+          if [[ "$PKG_VER" == *-* ]]; then
+            DIST_TAG="next"
+          fi
           echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on npm public registry..."
           if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
             echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on npm. Skipping publish step."
           else
-            npm publish --provenance --access public
-            echo "Successfully published ${PKG_NAME}@${PKG_VER} to npm."
+            npm publish --tag "$DIST_TAG" --provenance --access public
+            echo "Successfully published ${PKG_NAME}@${PKG_VER} (tag: ${DIST_TAG}) to npm."
           fi
 
   publish-gpr:
@@ -160,12 +164,16 @@ jobs:
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
+          DIST_TAG="latest"
+          if [[ "$PKG_VER" == *-* ]]; then
+            DIST_TAG="next"
+          fi
           echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on GitHub Packages..."
           if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://npm.pkg.github.com/ >/dev/null 2>&1; then
             echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on GitHub Packages. Skipping publish step."
           else
-            npm publish --registry=https://npm.pkg.github.com/
-            echo "Successfully published ${PKG_NAME}@${PKG_VER} to GitHub Packages."
+            npm publish --tag "$DIST_TAG" --registry=https://npm.pkg.github.com/
+            echo "Successfully published ${PKG_NAME}@${PKG_VER} (tag: ${DIST_TAG}) to GitHub Packages."
           fi
 
   publish-pypi:
@@ -270,6 +278,10 @@ jobs:
             dist/SHA256SUMS.txt
             dist/manifest.json
             dist/sri.json
+            dist/css/tol.css
+            dist/js/index.js
+            dist/json/schemes.json
+            dist/py/tol_palettes.py
           create-storage-record: false
 
   notify:
