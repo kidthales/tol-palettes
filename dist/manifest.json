@@ -1,6 +1,6 @@
 {
   "name": "@kidthales/tol-palettes",
-  "version": "0.3.1",
+  "version": "1.0.0-alpha.1",
   "artifacts": {
     "index.js": {
       "sha256": "99abe5af9f15cc673b61117e0c31c3123a519d924201c48c2db486ce948b6730",
@@ -11,16 +11,16 @@
       "size_bytes": 29456
     },
     "sri.json": {
-      "sha256": "d0360866e165150d66f4b23fc21a95a99e60a3e76a5c7843e1781757afb1010b",
-      "size_bytes": 4646
+      "sha256": "ce9bde74a80974f874e5d2bdf1eb0e21146e5d8a0edf111a6dd6fa03cdb424b2",
+      "size_bytes": 4654
     },
     "tol-palettes-aseprite.zip": {
       "sha256": "0fc42dd97eafba3ca10ac92079b2fb51553d735b585d6a17fa1072807704f4c6",
       "size_bytes": 14783
     },
     "tol-palettes-godot.zip": {
-      "sha256": "4231fd4170046071d01dddac97f7da931aa55da7139a70344963a1898773466d",
-      "size_bytes": 20972
+      "sha256": "2550578008f105ddeec0cd855e35d502e56b956127c1c554b74eac97d40401ec",
+      "size_bytes": 20977
     },
     "tol-palettes-gpl.zip": {
       "sha256": "9d2ff4bd0e6b62e0f0a0d08e608f9db88cda3f21f16f35ea8847382028905ff4",
@@ -31,8 +31,8 @@
       "size_bytes": 25385
     },
     "tol_palettes.py": {
-      "sha256": "ec3c083a5eaf93d2a30e7ff807212a95c8ceed671459f849b6625ba5dfc2d1d9",
-      "size_bytes": 28115
+      "sha256": "4a74be228e7dea56fe98ac16a5f67ea54761d0d6c106cd6e0acbed8e8951b556",
+      "size_bytes": 28117
     }
   }
 }
