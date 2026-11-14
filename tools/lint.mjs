@@ -9,8 +9,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
@@ -18,17 +18,166 @@ import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXPECTED_SCHEMA_ID = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
+const INVALID_EXPORT_TARGET_RE = /(?:^|\/)node_modules(?:\/|$)|%(?:2e|2f|5c)/i;
+
+function isWithinRoot(resolvedRoot, candidate) {
+  const rel = relative(resolvedRoot, candidate);
+  return !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
+}
+
+function hasInvalidExportSegments(pattern) {
+  const afterPrefix = pattern.slice(2);
+  if (afterPrefix.split('/').some((seg) => seg === '')) {
+    return true;
+  }
+  return [pattern, pattern.replace(/\*/g, '')].some(
+    (candidate) =>
+      candidate.includes('\\') ||
+      INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
+      candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+  );
+}
+
+function isValidSubpathKey(subpath, errors) {
+  if (subpath === '.') {
+    return true;
+  }
+  if (!subpath.startsWith('./')) {
+    errors.push(`[exports] Subpath key "${subpath}" must equal "." or start with "./".`);
+    return false;
+  }
+  if ((subpath.match(/\*/g) ?? []).length > 1) {
+    errors.push(`[exports] Subpath key "${subpath}" must not contain more than one "*" wildcard.`);
+    return false;
+  }
+  if (hasInvalidExportSegments(subpath)) {
+    errors.push(`[exports] Subpath key "${subpath}" contains invalid path segment.`);
+    return false;
+  }
+  return true;
+}
+
+function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
+  if (node === null) {
+    return;
+  }
+  if (Array.isArray(node)) {
+    if (node.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty fallback array.`);
+      return;
+    }
+    for (const item of node) {
+      auditExportNode(subpath, item, resolvedRoot, realRoot, errors);
+    }
+    return;
+  }
+  if (typeof node === 'object') {
+    const entries = Object.entries(node);
+    if (entries.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty condition map.`);
+      return;
+    }
+    for (const [condition, value] of entries) {
+      if (condition.startsWith('.')) {
+        errors.push(`[exports] Export "${subpath}" condition key "${condition}" must not start with ".".`);
+        continue;
+      }
+      auditExportNode(subpath, value, resolvedRoot, realRoot, errors);
+    }
+    return;
+  }
+  if (typeof node !== 'string') {
+    errors.push(`[exports] Export "${subpath}" has invalid target "${String(node)}".`);
+    return;
+  }
+  if (!node.startsWith('./')) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must start with "./".`);
+    return;
+  }
+  const wildcardCount = (node.match(/\*/g) ?? []).length;
+  if (wildcardCount > 1) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must not contain more than one "*" wildcard.`);
+    return;
+  }
+  const hasWildcard = wildcardCount === 1;
+  const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
+  const wildcardEmptyPath = resolve(resolvedRoot, node.replace(/\*/g, ''));
+  let checkPath = node;
+  if (hasWildcard) {
+    const beforeWildcard = node.slice(0, node.indexOf('*'));
+    checkPath = beforeWildcard.endsWith('/') ? beforeWildcard.slice(0, -1) : posix.dirname(beforeWildcard);
+    if (!checkPath || checkPath === './') {
+      checkPath = '.';
+    }
+  }
+  const resolvedCheckPath = resolve(resolvedRoot, checkPath);
+  if (
+    !isWithinRoot(resolvedRoot, wildcardSamplePath) ||
+    !isWithinRoot(resolvedRoot, wildcardEmptyPath) ||
+    !isWithinRoot(resolvedRoot, resolvedCheckPath)
+  ) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
+    return;
+  }
+  if (hasInvalidExportSegments(node)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
+    return;
+  }
+  let targetStat;
+  let realCheckPath;
+  try {
+    targetStat = statSync(resolvedCheckPath);
+    realCheckPath = realpathSync(resolvedCheckPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
+    } else {
+      errors.push(`[exports] Export "${subpath}" target "${node}" could not be inspected: ${err.message}`);
+    }
+    return;
+  }
+  if (!isWithinRoot(realRoot, realCheckPath)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root via symlink.`);
+    return;
+  }
+  if (hasWildcard) {
+    if (!targetStat.isDirectory()) {
+      errors.push(`[exports] Export "${subpath}" wildcard target "${node}" prefix must resolve to a directory.`);
+    }
+  } else if (!targetStat.isFile()) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must resolve to a file.`);
+  }
+}
 
 export function auditPackageExports(targetRoot, pkg) {
   const errors = [];
-  for (const [subpath, target] of Object.entries(pkg?.exports ?? {})) {
-    const targets = typeof target === 'string' ? [target] : Object.values(target);
-    for (const t of targets) {
-      const checkPath = t.includes('*') ? t.replace(/\/?\*.*$/, '') : t;
-      if (!existsSync(join(targetRoot, checkPath))) {
-        errors.push(`[exports] Export "${subpath}" target "${t}" does not exist on disk.`);
+  const resolvedRoot = resolve(targetRoot);
+  let realRoot = resolvedRoot;
+  try {
+    realRoot = realpathSync(resolvedRoot);
+  } catch {
+    // Fallback to resolvedRoot if targetRoot does not exist; per-target statSync will fail closed.
+  }
+  const exportsField = pkg?.exports;
+  if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
+    const keys = Object.keys(exportsField);
+    const hasSubpathKeys = keys.some((key) => key.startsWith('.'));
+    const hasConditionKeys = keys.some((key) => !key.startsWith('.'));
+    if (hasSubpathKeys && hasConditionKeys) {
+      errors.push('[exports] package.json exports must not mix "."-prefixed subpath keys with condition keys.');
+    }
+    if (!hasSubpathKeys && hasConditionKeys) {
+      auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
+    } else {
+      for (const [subpath, target] of Object.entries(exportsField)) {
+        if (subpath.startsWith('.') && !isValidSubpathKey(subpath, errors)) {
+          continue;
+        }
+        auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
       }
     }
+  } else if (exportsField !== undefined && exportsField !== null) {
+    auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
   }
   if (pkg?.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
     errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
@@ -52,8 +201,15 @@ export function auditHostedSchema(targetRoot) {
   }
   if (!existsSync(gallerySchemaPath)) {
     errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
-  } else if (srcSchemaBytes && !srcSchemaBytes.equals(readFileSync(gallerySchemaPath))) {
-    errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+  } else {
+    try {
+      const gallerySchemaBytes = readFileSync(gallerySchemaPath);
+      if (srcSchemaBytes && !srcSchemaBytes.equals(gallerySchemaBytes)) {
+        errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+      }
+    } catch (err) {
+      errors.push(`[gallery] Failed to read dist/gallery/schema/scheme.schema.json: ${err.message}`);
+    }
   }
   return errors;
 }
