@@ -1061,8 +1061,15 @@ test('ci.yml spans Python 3.11-3.14 across 4 matrix legs, forwards optional work
 
 test('release.yml locks all actions/checkout steps and verify workflow_call to target tag ref, and resolves notify tag + SHA', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
-  const expectedRef = '${{ github.event.release.tag_name || inputs.tag || github.ref }}';
+  const expectedRef =
+    "${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
   const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
+
+  assert.ok(
+    expectedRef.includes("format('refs/tags/{0}', github.event.release.tag_name)") &&
+      expectedRef.includes("format('refs/tags/{0}', inputs.tag)"),
+    'Expected expectedRef to qualify release.tag_name and inputs.tag with refs/tags/',
+  );
 
   let checkoutCount = 0;
   for (const jobId of expectedJobsWithCheckout) {
