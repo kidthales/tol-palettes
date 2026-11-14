@@ -93,8 +93,15 @@ export function auditHostedSchema(targetRoot) {
   }
   if (!existsSync(gallerySchemaPath)) {
     errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
-  } else if (srcSchemaBytes && !srcSchemaBytes.equals(readFileSync(gallerySchemaPath))) {
-    errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+  } else {
+    try {
+      const gallerySchemaBytes = readFileSync(gallerySchemaPath);
+      if (srcSchemaBytes && !srcSchemaBytes.equals(gallerySchemaBytes)) {
+        errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+      }
+    } catch (err) {
+      errors.push(`[gallery] Failed to read dist/gallery/schema/scheme.schema.json: ${err.message}`);
+    }
   }
   return errors;
 }
