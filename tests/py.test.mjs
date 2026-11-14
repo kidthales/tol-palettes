@@ -328,3 +328,49 @@ print("OK")
   const stdout = runPython(pyScript);
   assert.equal(stdout.trim(), 'OK');
 });
+
+test('tol_palettes.py exports PEP 440 __version__ and registers it in __all__', () => {
+  const content = readFileSync(pyPath, 'utf8');
+  const pyToml = readFileSync(join(root, 'pyproject.toml'), 'utf8');
+  const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
+  assert.ok(pyMatch, 'pyproject.toml must define version');
+  const expectedPep440 = pyMatch[1];
+  const escapedPep440 = expectedPep440.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  assert.match(content, new RegExp(`^__version__\\s*=\\s*['"]${escapedPep440}['"]`, 'm'));
+  assert.match(content, /'__version__'/);
+
+  const pyScript = `
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(r"${pyPath}").parent))
+import tol_palettes as tp
+
+assert hasattr(tp, '__version__'), "tol_palettes must export __version__"
+assert tp.__version__ == '${expectedPep440}', f"Version mismatch: {tp.__version__} != ${expectedPep440}"
+assert '__version__' in tp.__all__, "__version__ must be listed in __all__"
+print("OK")
+`;
+  const stdout = runPython(pyScript);
+  assert.equal(stdout.trim(), 'OK');
+});
+
+test('generatePyModule validates version option strictly and fails closed on invalid formats or injections', () => {
+  // Valid SemVer mapping to PEP 440
+  const pySemver = generatePyModule(undefined, { version: '1.2.3-alpha.4' });
+  assert.match(pySemver, /^__version__\s*=\s*'1\.2\.3a4'/m);
+
+  // Valid PEP 440 directly
+  const pyPep = generatePyModule(undefined, { version: '2.0.0rc1' });
+  assert.match(pyPep, /^__version__\s*=\s*'2\.0\.0rc1'/m);
+
+  // Fail-closed rejection of non-string
+  assert.throws(() => generatePyModule(undefined, { version: 123 }), /must be a string/);
+  assert.throws(() => generatePyModule(undefined, { version: {} }), /must be a string/);
+
+  // Fail-closed rejection of injections and invalid formats
+  assert.throws(() => generatePyModule(undefined, { version: "1.0.0'\nimport os" }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: '1.0.0-invalid' }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: 'v1.0.0' }), /Invalid version option/);
+  assert.throws(() => generatePyModule(undefined, { version: '' }), /Invalid version option/);
+});
