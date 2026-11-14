@@ -354,3 +354,90 @@ test('auditPackageExports enforces wildcard arity, inline filename-prefix wildca
     });
   });
 });
+
+test('auditPackageExports enforces subpath/condition key grammar and rejects empty slash segments', () => {
+  withTempRoot((dir) => {
+    mkdirSync(join(dir, 'schema'), { recursive: true });
+    mkdirSync(join(dir, 'dist', 'js'), { recursive: true });
+    writeFileSync(join(dir, 'schema', 'scheme.schema.json'), '{}', 'utf8');
+    writeFileSync(join(dir, 'dist', 'js', 'index.js'), '', 'utf8');
+
+    // Mixed top-level subpath and condition keys fail closed
+    const mixedTopLevelErrors = auditPackageExports(dir, {
+      exports: {
+        '.': './dist/js/index.js',
+        import: './dist/js/index.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      mixedTopLevelErrors.length,
+      1,
+      `Expected 1 mixed-key error, got: ${JSON.stringify(mixedTopLevelErrors)}`,
+    );
+    assert.ok(mixedTopLevelErrors[0].includes('must not mix "."-prefixed subpath keys with condition keys'));
+
+    // Nested condition map with "."-prefixed key fails closed (both under subpath map and top-level condition map)
+    const nestedDotKeyErrors = auditPackageExports(dir, {
+      exports: {
+        '.': {
+          './sub': './dist/js/index.js',
+        },
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      nestedDotKeyErrors.length,
+      1,
+      `Expected 1 nested condition-key error, got: ${JSON.stringify(nestedDotKeyErrors)}`,
+    );
+    assert.ok(nestedDotKeyErrors[0].includes('condition key "./sub" must not start with "."'));
+
+    const topLevelConditionErrors = auditPackageExports(dir, {
+      exports: {
+        import: {
+          '.': './dist/js/index.js',
+        },
+        default: './dist/js/index.js',
+      },
+    });
+    assert.ok(
+      topLevelConditionErrors.some((e) => e.includes('condition key "." must not start with "."')),
+      `Expected nested "." condition key error, got: ${JSON.stringify(topLevelConditionErrors)}`,
+    );
+    assert.ok(
+      !topLevelConditionErrors.some((e) => e.includes('must not mix')),
+      `Did not expect mixed-key error on pure condition map, got: ${JSON.stringify(topLevelConditionErrors)}`,
+    );
+
+    // Consecutive slashes and trailing slashes produce empty segments and fail closed
+    const emptySegmentErrors = auditPackageExports(dir, {
+      exports: {
+        './double-slash': './dist//js/index.js',
+        './leading-double-slash': './/dist/js/index.js',
+        './trailing-slash': './dist/js/',
+        './double-slash-glob/*': './dist//*',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      emptySegmentErrors.length,
+      4,
+      `Expected 4 empty-segment errors, got: ${JSON.stringify(emptySegmentErrors)}`,
+    );
+    assert.ok(emptySegmentErrors.every((e) => e.includes('contains invalid path segment')));
+
+    // Valid directory/mid-path wildcards still pass without false-positive empty-segment errors
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          './*': './*',
+          './js/*': './dist/js/*',
+          './mid/*': './dist/*/index.js',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+  });
+});

@@ -40,12 +40,16 @@ function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
     return;
   }
   if (typeof node === 'object') {
-    const values = Object.values(node);
-    if (values.length === 0) {
+    const entries = Object.entries(node);
+    if (entries.length === 0) {
       errors.push(`[exports] Export "${subpath}" has an empty condition map.`);
       return;
     }
-    for (const value of values) {
+    for (const [condition, value] of entries) {
+      if (condition.startsWith('.')) {
+        errors.push(`[exports] Export "${subpath}" condition key "${condition}" must not start with ".".`);
+        continue;
+      }
       auditExportNode(subpath, value, resolvedRoot, realRoot, errors);
     }
     return;
@@ -83,12 +87,15 @@ function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
     errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
     return;
   }
-  const hasInvalidSegment = [node, node.replace(/\*/g, '')].some(
-    (candidate) =>
-      candidate.includes('\\') ||
-      INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
-      candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
-  );
+  const hasEmptySegment = node.length > 2 && node.slice(2).split('/').some((seg) => seg === '');
+  const hasInvalidSegment =
+    hasEmptySegment ||
+    [node, node.replace(/\*/g, '')].some(
+      (candidate) =>
+        candidate.includes('\\') ||
+        INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
+        candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+    );
   if (hasInvalidSegment) {
     errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
     return;
@@ -130,8 +137,18 @@ export function auditPackageExports(targetRoot, pkg) {
   }
   const exportsField = pkg?.exports;
   if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
-    for (const [subpath, target] of Object.entries(exportsField)) {
-      auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
+    const keys = Object.keys(exportsField);
+    const hasSubpathKeys = keys.some((key) => key.startsWith('.'));
+    const hasConditionKeys = keys.some((key) => !key.startsWith('.'));
+    if (hasSubpathKeys && hasConditionKeys) {
+      errors.push('[exports] package.json exports must not mix "."-prefixed subpath keys with condition keys.');
+    }
+    if (!hasSubpathKeys && hasConditionKeys) {
+      auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
+    } else {
+      for (const [subpath, target] of Object.entries(exportsField)) {
+        auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
+      }
     }
   } else if (exportsField !== undefined && exportsField !== null) {
     auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
