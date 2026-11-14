@@ -213,15 +213,17 @@ export function auditWorkflows(targetPath, options = {}) {
       // Job-level reusable workflow call check
       if (job.uses) {
         const u = String(job.uses);
-        if (u.startsWith('$/') || u.startsWith('./')) {
+        if (u.startsWith('$')) {
+          violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$' prefix is invalid; use './' for same-repository workflow references)`);
+        } else if (u.startsWith('./')) {
           if (u.includes('..') || u.includes('\\')) {
             violations.push(`${wfName}: job '${jobId}' uses non-canonical workflow path '${u}'`);
           }
-          if (u.startsWith('$/') && u.includes('@')) {
-            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$/' same-repository workflow references must not specify an @ref)`);
+          if (u.includes('@')) {
+            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('./' same-repository workflow references must not specify an @ref)`);
           }
         } else if (u.startsWith('../')) {
-          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with '$/' or './')`);
+          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with './')`);
         } else if (u.startsWith('docker://')) {
           if (!/@sha256:[0-9a-fA-F]{64}$/.test(u)) {
             violations.push(`${wfName}: job '${jobId}' uses unpinned docker action '${u}' (must pin to @sha256 digest)`);
@@ -245,11 +247,14 @@ export function auditWorkflows(targetPath, options = {}) {
         // 4. Action uses pinning and canonical path checks
         if (step.uses) {
           const uses = String(step.uses);
-          if (uses.startsWith('$/')) {
-            violations.push(`${wfName}: step '${stepName}' uses '$/' which is only valid for reusable workflow calls at job level ('${uses}')`);
+          if (uses.startsWith('$')) {
+            violations.push(`${wfName}: step '${stepName}' uses invalid action target '${uses}' ('$' prefix is invalid)`);
           } else if (uses.startsWith('./')) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
+            }
+            if (uses.includes('@')) {
+              violations.push(`${wfName}: step '${stepName}' uses invalid local action target '${uses}' ('./' same-repository local action references must not specify an @ref)`);
             }
           } else if (uses.startsWith('../')) {
             violations.push(`${wfName}: step '${stepName}' uses non-canonical relative path '${uses}' (must start with './')`);
@@ -315,8 +320,8 @@ export function auditWorkflows(targetPath, options = {}) {
       if (jobId === 'test-and-build' || jobId === 'verify') {
         if (steps.length > 0 && !jobRunsCanonicalCi) {
           violations.push(`${wfName}: verify job '${jobId}' defines steps but does not invoke './scripts/ci-local.ps1 -CI'.`);
-        } else if (steps.length === 0 && job.uses !== '$/.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call '$/.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
+        } else if (steps.length === 0 && job.uses !== './.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call './.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
         }
       }
     }
@@ -361,8 +366,8 @@ export function auditWorkflows(targetPath, options = {}) {
       // pages.yml: verify delegation
       if (!jobs.verify) {
         violations.push(`${wfName}: missing 'verify' job delegation`);
-      } else if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
-        violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+      } else if (jobs.verify.uses !== './.github/workflows/ci.yml') {
+        violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
       }
 
       // pages.yml: build job needs verify
@@ -400,8 +405,8 @@ export function auditWorkflows(targetPath, options = {}) {
         if (!needs.includes('tag-guard')) {
           violations.push(`${wfName}: verify job must declare needs: [tag-guard]`);
         }
-        if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+        if (jobs.verify.uses !== './.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
         }
       }
 

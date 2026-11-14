@@ -54,7 +54,30 @@ test('-CI with -SkipGenerate exits non-zero and enforces fail-closed contract', 
   assert.ok(combined.includes('-SkipGenerate'), `Expected "-SkipGenerate" in output, got: ${combined}`);
 });
 
-test('valid repository workflows pass Gate 0', () => {
+test('-CI with -Gate1Only exits non-zero and enforces fail-closed contract', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-CI', '-Gate1Only'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(combined.includes('fail-closed'), `Expected "fail-closed" in output, got: ${combined}`);
+  assert.ok(combined.includes('-Gate1Only'), `Expected "-Gate1Only" in output, got: ${combined}`);
+});
+
+test('-Gate0Only combined with -Gate1Only exits non-zero and rejects mutual exclusion', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-Gate1Only'], {
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status when combining -Gate0Only and -Gate1Only');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(
+    combined.includes('-Gate0Only and -Gate1Only cannot be combined'),
+    `Expected mutual-exclusion error in output, got: ${combined}`,
+  );
+});
+
+test('valid repository workflows pass Gate 0 and Gate 1', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only'], {
     cwd: root,
     encoding: 'utf8',
@@ -63,6 +86,15 @@ test('valid repository workflows pass Gate 0', () => {
   const combined = (res.stdout || '') + (res.stderr || '');
   assert.equal(res.status, 0, `Expected Gate 0 to pass on repo workflows. Output: ${combined}`);
   assert.ok(combined.includes('All workflow run steps conform'), 'Expected success confirmation');
+
+  const gate1Res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  const gate1Out = (gate1Res.stdout || '') + (gate1Res.stderr || '');
+  assert.equal(gate1Res.status, 0, `Expected Gate 1 to pass on repo workflows. Output: ${gate1Out}`);
+  assert.ok(gate1Out.includes('[gate1_action_pins_and_leaks: PASS]'), 'Expected Gate 1 PASS summary');
 });
 
 test('fixture workflow with un-allowlisted inline step fails Gate 0', () => {
@@ -136,7 +168,8 @@ test('all third-party actions across all workflow files are pinned to 40-charact
   const files = readdirSync(workflowsDir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   assert.ok(files.length > 0, 'Must have workflow files');
 
-  const shaPattern = /@[0-9a-fA-F]{40}/;
+  const shaPattern = /@[0-9a-fA-F]{40}$/;
+  const dockerDigestPattern = /@sha256:[0-9a-fA-F]{64}$/;
 
   for (const file of files) {
     const content = readFileSync(join(workflowsDir, file), 'utf8');
@@ -146,12 +179,27 @@ test('all third-party actions across all workflow files are pinned to 40-charact
       const match = line.match(/^\s*(?:-\s+)?uses:\s*['"]?([^'"\s#]+)['"]?/);
       if (match) {
         const actionRef = match[1];
-        if (
-          actionRef.startsWith('./') ||
-          actionRef.startsWith('../') ||
-          actionRef.startsWith('$/') ||
-          actionRef.startsWith('docker://')
-        ) {
+        assert.ok(
+          !actionRef.startsWith('$'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not start with "$" (use "./" for same-repository references)`,
+        );
+        assert.ok(
+          !actionRef.startsWith('../'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not use "../" relative path (must start with "./")`,
+        );
+        if (actionRef.startsWith('./')) {
+          assert.ok(
+            !actionRef.includes('..') && !actionRef.includes('\\') && !actionRef.includes('@'),
+            `Same-repository reference in ${file} line ${i + 1} ("${actionRef}") must be canonical and must not specify an @ref`,
+          );
+          continue;
+        }
+        if (actionRef.startsWith('docker://')) {
+          assert.match(
+            actionRef,
+            dockerDigestPattern,
+            `Docker action reference in ${file} line ${i + 1} ("${actionRef}") must be pinned to a @sha256 digest`,
+          );
           continue;
         }
         assert.match(
@@ -480,15 +528,44 @@ jobs:
   );
 });
 
-test('auditWorkflows and ci-local.ps1 reject $/ workflow targets with @ref and $/ in steps', () => {
+test('auditWorkflows and ci-local.ps1 Gate 1 reject any uses: starting with $, ../, and ./ references with @ref', () => {
   withTempFixture(
     {
-      'dollar_ref.yml': `name: DollarRef
+      'dollar_job.yml': `name: DollarJob
 permissions:
   contents: read
 jobs:
   call:
-    uses: $/.github/workflows/ci.yml@main
+    uses: $/.github/workflows/ci.yml
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
+
+      // Verify ci-local.ps1 Gate 1 directly rejects it without halting at Gate 0
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate0_workflow_contract: NOT-APPLICABLE]'));
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_ref.yml': `name: LocalRef
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: ./.github/workflows/ci.yml@main
 `,
     },
     (dir) => {
@@ -496,15 +573,77 @@ jobs:
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
 
-      // Also verify ci-local.ps1 Gate 1 rejects it
-      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', dir], {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, GITHUB_ACTIONS: '' },
       });
       assert.notEqual(psRes.status, 0);
       const combined = (psRes.stdout || '') + (psRes.stderr || '');
-      assert.ok(combined.includes("same-repository workflow references must not specify an @ref"));
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_step_ref.yml': `name: LocalStepRef
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local step with ref
+        uses: ./.github/actions/my-action@main
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("same-repository local action references must not specify an @ref")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'relative_parent.yml': `name: RelativeParent
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local parent relative
+        uses: ../local-action
+`,
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must start with './'"));
     },
   );
 
@@ -527,7 +666,109 @@ jobs:
     (dir) => {
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
-      assert.ok(res.violations.some((v) => v.includes("only valid for reusable workflow calls at job level")));
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  // Single-line workflow file must be evaluated as a full line, not scalar [char] indexing
+  withTempFixture(
+    {
+      'single_line.yml': 'uses: $/.github/workflows/ci.yml',
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  // Missing or empty workflows directory must fail closed under -Gate1Only
+  withTempFixture({}, (emptyDir) => {
+    const emptyRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', emptyDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(emptyRes.status, 0, 'Expected empty workflows directory to fail closed under -Gate1Only');
+    const emptyOut = (emptyRes.stdout || '') + (emptyRes.stderr || '');
+    assert.ok(emptyOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(emptyOut.includes('No workflow files'));
+
+    const missingDir = join(emptyDir, 'nonexistent');
+    const missingRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', missingDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(missingRes.status, 0, 'Expected missing workflows directory to fail closed under -Gate1Only');
+    const missingOut = (missingRes.stdout || '') + (missingRes.stderr || '');
+    assert.ok(missingOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(missingOut.includes('Workflows directory not found'));
+  });
+
+  // Multiple invalid uses: targets across files must all be reported before throwing
+  withTempFixture(
+    {
+      'multi_a.yml': `name: MultiA
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: $/.github/workflows/ci.yml
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: ../local-action
+      - uses: ./.github/actions/my-action@main
+`,
+      'multi_b.yml': `name: MultiB
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: docker://alpine:latest
+      - uses: actions/checkout@v4
+`,
+    },
+    (multiDir) => {
+      const multiRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', multiDir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(multiRes.status, 0, 'Expected multi-violation fixture to fail closed under -Gate1Only');
+      const multiOut = (multiRes.stdout || '') + (multiRes.stderr || '');
+      assert.ok(multiOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(multiOut.includes("'$' prefix is invalid"));
+      assert.ok(multiOut.includes("must start with './'"));
+      assert.ok(multiOut.includes('must not specify an @ref'));
+      assert.ok(multiOut.includes('must pin to @sha256 digest'));
+      assert.ok(multiOut.includes('must pin to 40-char commit SHA'));
+      assert.ok(multiOut.includes('Gate 1 Failed: GitHub Actions commit SHA pin verification failed.'));
     },
   );
 });
@@ -834,7 +1075,7 @@ jobs:
       - name: Verify release tag matches project metadata versions
         run: echo no exit
   verify:
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
   attach-assets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -883,7 +1124,7 @@ jobs:
         run: exit 1
   verify:
     needs: [tag-guard]
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
   attach-assets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1041,7 +1282,8 @@ test('ci.yml spans Python 3.11-3.14 across 4 matrix legs, forwards optional work
 
 test('release.yml locks all actions/checkout steps and verify workflow_call to target tag ref, and resolves notify tag + SHA', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
-  const expectedRef = '${{ github.event.release.tag_name || inputs.tag || github.ref }}';
+  const expectedRef =
+    "${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
   const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
 
   let checkoutCount = 0;
@@ -1055,8 +1297,17 @@ test('release.yml locks all actions/checkout steps and verify workflow_call to t
   }
   assert.equal(checkoutCount, 5);
 
-  assert.equal(releaseDoc?.jobs?.verify?.uses, '$/.github/workflows/ci.yml');
-  assert.equal(releaseDoc?.jobs?.verify?.with?.ref, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+  assert.equal(releaseDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
+  const verifyRef = releaseDoc?.jobs?.verify?.with?.ref;
+  assert.equal(verifyRef, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+  assert.ok(
+    verifyRef.includes("format('refs/tags/{0}', github.event.release.tag_name)") &&
+      verifyRef.includes("format('refs/tags/{0}', inputs.tag)"),
+    'Expected release.yml verify.with.ref to qualify release.tag_name and inputs.tag with refs/tags/',
+  );
+
+  const pagesDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'pages.yml'), 'utf8'));
+  assert.equal(pagesDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
 
   const tagGuardJob = releaseDoc?.jobs?.['tag-guard'];
   assert.equal(tagGuardJob?.outputs?.sha, '${{ steps.verify-tag.outputs.sha }}');
