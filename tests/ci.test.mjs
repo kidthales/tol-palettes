@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
 import {
   resolveOutDir,
@@ -996,4 +997,118 @@ test('path-jail: isSameOrSubpath correctly detects subpath relations', () => {
   assert.equal(isSameOrSubpath(join(root, 'dist', 'css'), root), true);
   assert.equal(isSameOrSubpath(root, join(root, 'dist')), false);
   assert.equal(isSameOrSubpath(tmpdir(), root), false);
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests: CI Python matrix, requirements-ci, & release.yml contracts
+// ---------------------------------------------------------------------------
+
+test('ci.yml spans Python 3.11-3.14 across 4 matrix legs and requirements-ci pins matplotlib==3.11.2', () => {
+  const ciDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const include = ciDoc?.jobs?.verify?.strategy?.matrix?.include;
+  assert.ok(Array.isArray(include), 'Expected verify.strategy.matrix.include array in ci.yml');
+  assert.equal(include.length, 4, 'Expected exactly 4 matrix legs in ci.yml');
+
+  const pythonVersions = include.map((leg) => String(leg.python)).sort();
+  assert.deepEqual(pythonVersions, ['3.11', '3.12', '3.13', '3.14']);
+
+  const reqs = readFileSync(join(root, 'requirements-ci.txt'), 'utf8');
+  assert.match(reqs, /^matplotlib==3\.11\.2\s*$/m, 'Expected matplotlib==3.11.2 pin in requirements-ci.txt');
+});
+
+test('release.yml locks all actions/checkout steps to target tag ref and resolves notify tag', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const expectedRef = '${{ github.event.release.tag_name || inputs.tag || github.ref }}';
+  const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
+
+  let checkoutCount = 0;
+  for (const jobId of expectedJobsWithCheckout) {
+    const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
+    const checkoutSteps = steps.filter((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'));
+    assert.equal(checkoutSteps.length, 1, `Expected 1 actions/checkout step in ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.ref, expectedRef, `Expected tag-locked checkout ref in ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.['persist-credentials'], false, `Expected persist-credentials: false in ${jobId}`);
+    checkoutCount += checkoutSteps.length;
+  }
+  assert.equal(checkoutCount, 5);
+
+  const notifySteps = releaseDoc?.jobs?.notify?.steps || [];
+  assert.equal(notifySteps.length, 1);
+  const notifyStep = notifySteps[0];
+  assert.equal(notifyStep.env?.RELEASE_TAG, '${{ github.event.release.tag_name }}');
+  assert.equal(notifyStep.env?.DISPATCH_TAG, '${{ inputs.tag }}');
+  assert.equal(notifyStep.env?.REF_NAME, '${{ github.ref_name }}');
+  assert.match(notifyStep.run, /TAG_NAME="\$\{RELEASE_TAG:-\$\{DISPATCH_TAG:-\$REF_NAME\}\}"/);
+});
+
+test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects invalid formats, and checks PEP 440 parity', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const tgSteps = releaseDoc?.jobs?.['tag-guard']?.steps || [];
+  const verifyStep = tgSteps.find((s) => s.name === 'Verify release tag matches project metadata versions');
+  assert.ok(verifyStep, 'Expected Verify release tag step in release.yml');
+
+  const regexMatch = verifyStep.run.match(/\[\[\s*"\$TAG"\s*=~\s*([^\s]+)\s*\]\]/);
+  assert.ok(regexMatch, 'Expected bash regex match against $TAG in tag-guard');
+  const tagPattern = regexMatch[1];
+  assert.equal(tagPattern, '^v[0-9]+\\.[0-9]+\\.[0-9]+(-(alpha|beta|rc)\\.[1-9][0-9]*)?$');
+
+  const tagRegex = new RegExp(tagPattern);
+  for (const valid of ['v0.3.1', 'v1.0.0', 'v1.0.0-alpha.1', 'v1.0.0-beta.2', 'v1.0.0-rc.10']) {
+    assert.equal(tagRegex.test(valid), true, `Expected tag "${valid}" to match tag-guard regex`);
+  }
+  for (const invalid of [
+    '1.0.0',
+    'v1.0',
+    'v1.0.0-alpha',
+    'v1.0.0-alpha.0',
+    'v1.0.0-preview.1',
+    'v1.0.0a1',
+    'v1.0.0-alpha.1+build.1',
+    '',
+  ]) {
+    assert.equal(tagRegex.test(invalid), false, `Expected invalid tag "${invalid}" to be rejected by tag-guard regex`);
+  }
+
+  assert.match(verifyStep.run, /semverToPep440/, 'Expected tag-guard to compute PEP 440 parity via semverToPep440');
+  assert.match(verifyStep.run, /pyproject\.toml/, 'Expected tag-guard to verify pyproject.toml version parity');
+});
+
+test('release.yml routes prereleases to next dist-tag, enforces skip-existing, git clean guard, and 10-asset attestation', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+
+  for (const jobId of ['publish-npm', 'publish-gpr']) {
+    const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
+    const pubStep = steps.find((s) => typeof s.run === 'string' && s.run.includes('npm publish'));
+    assert.ok(pubStep, `Expected npm publish step in ${jobId}`);
+    assert.match(pubStep.run, /DIST_TAG="latest"/);
+    assert.match(pubStep.run, /if \[\[ "\$PKG_VER" == \*-\* \]\]; then\s+DIST_TAG="next"/);
+    assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG"/);
+  }
+
+  const pypiSteps = releaseDoc?.jobs?.['publish-pypi']?.steps || [];
+  const pypiPublish = pypiSteps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('pypa/gh-action-pypi-publish@'));
+  assert.ok(pypiPublish, 'Expected pypa/gh-action-pypi-publish step in publish-pypi');
+  assert.equal(pypiPublish.with?.['skip-existing'], true);
+
+  const attachSteps = releaseDoc?.jobs?.['attach-assets']?.steps || [];
+  const genStep = attachSteps.find((s) => s.name === 'Generate game assets and package zip bundles');
+  assert.ok(genStep, 'Expected generate step in attach-assets');
+  assert.match(genStep.run, /test -z "\$\(git status --porcelain\)"/);
+
+  const attestStep = attachSteps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/attest@'));
+  assert.ok(attestStep, 'Expected actions/attest step in attach-assets');
+  const subjectLines = String(attestStep.with?.['subject-path'] || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  assert.deepEqual(subjectLines, [
+    'dist/assets/*.zip',
+    'dist/SHA256SUMS.txt',
+    'dist/manifest.json',
+    'dist/sri.json',
+    'dist/css/tol.css',
+    'dist/js/index.js',
+    'dist/json/schemes.json',
+    'dist/py/tol_palettes.py',
+  ]);
 });
