@@ -29,13 +29,22 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     return;
   }
   if (Array.isArray(node)) {
+    if (node.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty fallback array.`);
+      return;
+    }
     for (const item of node) {
       auditExportNode(subpath, item, resolvedRoot, errors);
     }
     return;
   }
   if (typeof node === 'object') {
-    for (const value of Object.values(node)) {
+    const values = Object.values(node);
+    if (values.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty condition map.`);
+      return;
+    }
+    for (const value of values) {
       auditExportNode(subpath, value, resolvedRoot, errors);
     }
     return;
@@ -49,10 +58,22 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     return;
   }
   const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
+  const wildcardEmptyPath = resolve(resolvedRoot, node.replace(/\*/g, ''));
   const checkPath = node.includes('*') ? node.replace(/\/?\*.*$/, '') : node;
   const resolvedCheckPath = resolve(resolvedRoot, checkPath);
-  if (!isWithinRoot(resolvedRoot, wildcardSamplePath) || !isWithinRoot(resolvedRoot, resolvedCheckPath)) {
+  if (
+    !isWithinRoot(resolvedRoot, wildcardSamplePath) ||
+    !isWithinRoot(resolvedRoot, wildcardEmptyPath) ||
+    !isWithinRoot(resolvedRoot, resolvedCheckPath)
+  ) {
     errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
+    return;
+  }
+  const hasInvalidSegment = [node, node.replace(/\*/g, '')].some(
+    (candidate) => candidate.includes('\\') || candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+  );
+  if (hasInvalidSegment) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
     return;
   }
   if (!existsSync(resolvedCheckPath)) {

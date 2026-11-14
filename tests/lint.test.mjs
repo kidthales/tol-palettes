@@ -99,16 +99,58 @@ test('auditPackageExports handles null subpath restrictions, nested conditional 
       `Expected "./" prefix error, got: ${JSON.stringify(missingPrefixErrors)}`,
     );
 
-    // Target starting with "./" that escapes package root via "../"
+    // Target starting with "./" that escapes package root via "../" or wildcard coalescing
     const outOfRootErrors = auditPackageExports(dir, {
       exports: {
         './escape-dot': './dist/../../outside.js',
         './escape-glob': './../outside/*',
+        './escape-coalesce': './*../outside.js',
         './schema/scheme.schema.json': './schema/scheme.schema.json',
       },
     });
-    assert.equal(outOfRootErrors.length, 2, `Expected 2 out-of-root errors, got: ${JSON.stringify(outOfRootErrors)}`);
+    assert.equal(outOfRootErrors.length, 3, `Expected 3 out-of-root errors, got: ${JSON.stringify(outOfRootErrors)}`);
     assert.ok(outOfRootErrors.every((e) => e.includes('resolves outside package root')));
+
+    // Targets containing invalid ".", "..", or "\" path segments (including post-wildcard expansion)
+    const invalidSegmentErrors = auditPackageExports(dir, {
+      exports: {
+        './dot-seg': './dist/./js/index.js',
+        './dotdot-coalesce': './dist/*../outside.js',
+        './backslash': './dist\\js\\index.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      invalidSegmentErrors.length,
+      3,
+      `Expected 3 invalid-segment errors, got: ${JSON.stringify(invalidSegmentErrors)}`,
+    );
+    assert.ok(invalidSegmentErrors.every((e) => e.includes('contains invalid path segment')));
+
+    // Empty conditional export maps and empty fallback arrays
+    const emptyTargetErrors = auditPackageExports(dir, {
+      exports: {
+        '.': {},
+        './nested-empty': { import: {} },
+        './fallback': [],
+        './nested-fallback': ['./dist/js/index.js', []],
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(emptyTargetErrors.length, 4, `Expected 4 empty-target errors, got: ${JSON.stringify(emptyTargetErrors)}`);
+    assert.equal(emptyTargetErrors.filter((e) => e.includes('empty condition map')).length, 2);
+    assert.equal(emptyTargetErrors.filter((e) => e.includes('empty fallback array')).length, 2);
+
+    // Valid wildcard directory export still passes
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          './js/*': './dist/js/*',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
   });
 });
 
