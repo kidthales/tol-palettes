@@ -28,6 +28,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -47,6 +48,10 @@ jobs:
             echo "::error::No release tag or ref name found."
             exit 1
           fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$ ]]; then
+            echo "::error::Release tag '$TAG' does not match required format '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$'."
+            exit 1
+          fi
           PKG_VER=$(node -p "require('./package.json').version")
           EXPECTED_TAG="v${PKG_VER}"
           echo "Comparing release tag '$TAG' with expected tag '$EXPECTED_TAG'..."
@@ -55,9 +60,10 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_PY_VER=$(PKG_VER="$PKG_VER" node --input-type=module -e "import { semverToPep440 } from './tools/sync-version.mjs'; console.log(semverToPep440(process.env.PKG_VER));")
           PY_VER=$(node -p 'require("fs").readFileSync("pyproject.toml", "utf8").match(/^version\s*=\s*["'\''"]([^"'\''"]+)["'\''"]/m)[1]')
-          if [ "$PY_VER" != "$PKG_VER" ]; then
-            echo "::error::pyproject.toml version '$PY_VER' does not match package.json version '$PKG_VER'."
+          if [ "$PY_VER" != "$EXPECTED_PY_VER" ]; then
+            echo "::error::pyproject.toml version '$PY_VER' does not match expected PEP 440 version '$EXPECTED_PY_VER' (from '$PKG_VER')."
             exit 1
           fi
 
@@ -73,7 +79,7 @@ jobs:
             exit 1
           fi
 
-          echo "Release tag '$TAG' matches version $PKG_VER across package.json, pyproject.toml, CITATION.cff, and plugin.cfg."
+          echo "Release tag '$TAG' matches version $PKG_VER (PEP 440: $EXPECTED_PY_VER) across package.json, pyproject.toml, CITATION.cff, and plugin.cfg."
 
   verify:
     name: Verify Release via CI Pipeline
@@ -95,6 +101,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -133,6 +140,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -175,6 +183,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Set up Python
@@ -192,6 +201,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist_pypi/
+          skip-existing: true
 
   attach-assets:
     name: Attach Release Asset Bundles
@@ -207,6 +217,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -222,6 +233,11 @@ jobs:
         run: |
           npm run generate:game
           npm run package:assets
+          if ! test -z "$(git status --porcelain)"; then
+            echo "::error::Generated game assets or zip bundles produced unexpected git working tree drift."
+            git status --porcelain
+            exit 1
+          fi
 
       - name: Upload release assets to GitHub Release
         env:
@@ -276,10 +292,13 @@ jobs:
           PYPI_STATUS: ${{ needs.publish-pypi.result }}
           ASSETS_STATUS: ${{ needs.attach-assets.result || 'skipped' }}
           REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          TAG_NAME="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           if [ "$JOB_STATUS" = "success" ]; then
             COLOR=2263091
             TITLE="🚀 Release Published — tol-palettes"
@@ -295,7 +314,7 @@ jobs:
             --arg title "$TITLE" \
             --arg url "$RUN_URL" \
             --arg repo "$REPO" \
-            --arg tag "$REF_NAME" \
+            --arg tag "$TAG_NAME" \
             --arg sha "$SHA" \
             --arg npm "$NPM_STATUS" \
             --arg gpr "$GPR_STATUS" \
