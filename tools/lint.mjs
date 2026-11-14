@@ -5,7 +5,7 @@
 // 4. Verifies zero tracked agent/scratch files in git
 // 5. Verifies package.json subpath exports resolve on disk
 // 6. Audits GitHub Actions workflows against AST drift and security invariants
-// 7. Audits dist/gallery/index.html for CSP compliance, anchors, and accessible controls
+// 7. Audits dist/gallery/index.html for CSP compliance, anchors, accessible controls, and hosted schema parity
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -94,6 +94,9 @@ for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
     }
   }
 }
+if (pkg.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
+  errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
+}
 
 // 6. GitHub Actions workflow AST & security audit
 const workflowViolations = auditWorkflows(root);
@@ -158,6 +161,23 @@ if (existsSync(galleryHtmlPath)) {
       }
     }
   }
+}
+
+const srcSchemaPath = join(root, 'schema', 'scheme.schema.json');
+const gallerySchemaPath = join(root, 'dist', 'gallery', 'schema', 'scheme.schema.json');
+const expectedSchemaId = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
+try {
+  const srcSchema = JSON.parse(readFileSync(srcSchemaPath, 'utf8'));
+  if (srcSchema.$id !== expectedSchemaId) {
+    errors.push(`[schema] schema/scheme.schema.json $id must be "${expectedSchemaId}", found "${srcSchema.$id}"`);
+  }
+} catch (err) {
+  errors.push(`[schema] Failed to parse schema/scheme.schema.json: ${err.message}`);
+}
+if (!existsSync(gallerySchemaPath)) {
+  errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
+} else if (!readFileSync(srcSchemaPath).equals(readFileSync(gallerySchemaPath))) {
+  errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
 }
 
 // 8. 8-target version parity verification

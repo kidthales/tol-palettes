@@ -29,6 +29,7 @@ test('npm pack --dry-run enforces size budgets and excludes dev/CI files', () =>
   assert.ok(paths.includes('dist/json/schemes.json'), 'dist/json/schemes.json must be included');
   assert.ok(paths.includes('dist/json/schemes.d.ts'), 'dist/json/schemes.d.ts must be included');
   assert.ok(paths.includes('dist/py/tol_palettes.py'), 'dist/py/tol_palettes.py must be included');
+  assert.ok(paths.includes('schema/scheme.schema.json'), 'schema/scheme.schema.json must be included');
 
   for (const p of paths) {
     assert.doesNotMatch(
@@ -67,6 +68,16 @@ test('package.json exports ./sri and ./schemes.json configure types conditions',
   const sri = JSON.parse(readFileSync(join(root, 'dist', 'sri.json'), 'utf8'));
   assert.equal(sri.package, pkg.name);
   assert.equal(sri.version, pkg.version);
+});
+
+test('package.json exports ./schema/scheme.schema.json and schema uses hosted $id', () => {
+  assert.equal(pkg.exports['./schema/scheme.schema.json'], './schema/scheme.schema.json');
+  const resolvedUrl = import.meta.resolve('@kidthales/tol-palettes/schema/scheme.schema.json');
+  const expectedPath = join(root, 'schema', 'scheme.schema.json');
+  assert.equal(fileURLToPath(resolvedUrl), expectedPath);
+
+  const schema = JSON.parse(readFileSync(expectedPath, 'utf8'));
+  assert.equal(schema.$id, 'https://tol-palettes.kidthales.com/schema/scheme.schema.json');
 });
 
 test('external ESM consumer import and TypeScript declaration integrity', async () => {

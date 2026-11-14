@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/kidthales/tol-palettes/schema/scheme.schema.json",
+  "$id": "https://tol-palettes.kidthales.com/schema/scheme.schema.json",
   "title": "tol-palettes scheme",
   "description": "One colour scheme. Colour values only; a colour 'name' is present only when the official source (tol_colors.py) provides one.",
   "type": "object",

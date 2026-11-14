@@ -72,6 +72,22 @@ test('dist/gallery/CNAME exists and contains custom domain', () => {
   assert.equal(cname, 'tol-palettes.kidthales.com\n');
 });
 
+test('dist/gallery/schema/scheme.schema.json exists, is byte-identical to schema/scheme.schema.json, and uses hosted $id', () => {
+  const srcSchemaPath = join(root, 'schema', 'scheme.schema.json');
+  const gallerySchemaPath = join(root, 'dist', 'gallery', 'schema', 'scheme.schema.json');
+  assert.ok(existsSync(gallerySchemaPath), 'dist/gallery/schema/scheme.schema.json must exist');
+
+  const srcBytes = readFileSync(srcSchemaPath);
+  const galleryBytes = readFileSync(gallerySchemaPath);
+  assert.ok(
+    srcBytes.equals(galleryBytes),
+    'dist/gallery/schema/scheme.schema.json must be byte-identical to schema/scheme.schema.json',
+  );
+
+  const parsed = JSON.parse(galleryBytes.toString('utf8'));
+  assert.equal(parsed.$id, 'https://tol-palettes.kidthales.com/schema/scheme.schema.json');
+});
+
 test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios and keyboard controls', () => {
   const html = readFileSync(galleryPath, 'utf8');
   const js = readFileSync(galleryJsPath, 'utf8');

@@ -67,6 +67,7 @@
     "./godot/*": "./dist/godot/*",
     "./gpl/*": "./dist/gpl/*",
     "./aseprite/*": "./dist/aseprite/*",
+    "./schema/scheme.schema.json": "./schema/scheme.schema.json",
     "./package.json": "./package.json"
   },
   "sideEffects": false,
