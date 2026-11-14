@@ -10,14 +10,56 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
 import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const errors = [];
+export const EXPECTED_SCHEMA_ID = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
+
+export function auditPackageExports(targetRoot, pkg) {
+  const errors = [];
+  for (const [subpath, target] of Object.entries(pkg?.exports ?? {})) {
+    const targets = typeof target === 'string' ? [target] : Object.values(target);
+    for (const t of targets) {
+      const checkPath = t.includes('*') ? t.replace(/\/?\*.*$/, '') : t;
+      if (!existsSync(join(targetRoot, checkPath))) {
+        errors.push(`[exports] Export "${subpath}" target "${t}" does not exist on disk.`);
+      }
+    }
+  }
+  if (pkg?.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
+    errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
+  }
+  return errors;
+}
+
+export function auditHostedSchema(targetRoot) {
+  const errors = [];
+  const srcSchemaPath = join(targetRoot, 'schema', 'scheme.schema.json');
+  const gallerySchemaPath = join(targetRoot, 'dist', 'gallery', 'schema', 'scheme.schema.json');
+  let srcSchemaBytes = null;
+  try {
+    srcSchemaBytes = readFileSync(srcSchemaPath);
+    const srcSchema = JSON.parse(srcSchemaBytes.toString('utf8'));
+    if (srcSchema.$id !== EXPECTED_SCHEMA_ID) {
+      errors.push(`[schema] schema/scheme.schema.json $id must be "${EXPECTED_SCHEMA_ID}", found "${srcSchema.$id}"`);
+    }
+  } catch (err) {
+    errors.push(`[schema] Failed to parse schema/scheme.schema.json: ${err.message}`);
+  }
+  if (!existsSync(gallerySchemaPath)) {
+    errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
+  } else if (srcSchemaBytes && !srcSchemaBytes.equals(readFileSync(gallerySchemaPath))) {
+    errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+  }
+  return errors;
+}
+
+export function runLint() {
+  const errors = [];
 
 // 1. JSON Schema + Invariant validation
 const results = validateAll();
@@ -85,18 +127,7 @@ try {
 
 // 5. Package exports resolution check
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
-  const targets = typeof target === 'string' ? [target] : Object.values(target);
-  for (const t of targets) {
-    const checkPath = t.includes('*') ? t.replace(/\/?\*.*$/, '') : t;
-    if (!existsSync(join(root, checkPath))) {
-      errors.push(`[exports] Export "${subpath}" target "${t}" does not exist on disk.`);
-    }
-  }
-}
-if (pkg.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
-  errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
-}
+errors.push(...auditPackageExports(root, pkg));
 
 // 6. GitHub Actions workflow AST & security audit
 const workflowViolations = auditWorkflows(root);
@@ -163,22 +194,7 @@ if (existsSync(galleryHtmlPath)) {
   }
 }
 
-const srcSchemaPath = join(root, 'schema', 'scheme.schema.json');
-const gallerySchemaPath = join(root, 'dist', 'gallery', 'schema', 'scheme.schema.json');
-const expectedSchemaId = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
-try {
-  const srcSchema = JSON.parse(readFileSync(srcSchemaPath, 'utf8'));
-  if (srcSchema.$id !== expectedSchemaId) {
-    errors.push(`[schema] schema/scheme.schema.json $id must be "${expectedSchemaId}", found "${srcSchema.$id}"`);
-  }
-} catch (err) {
-  errors.push(`[schema] Failed to parse schema/scheme.schema.json: ${err.message}`);
-}
-if (!existsSync(gallerySchemaPath)) {
-  errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
-} else if (!readFileSync(srcSchemaPath).equals(readFileSync(gallerySchemaPath))) {
-  errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
-}
+errors.push(...auditHostedSchema(root));
 
 // 8. 8-target version parity verification
 let expectedPep440;
@@ -410,10 +426,16 @@ for (const docRel of DOC_FILES) {
   }
 }
 
-if (errors.length > 0) {
-  console.error('✖ Lint failed:');
-  for (const e of errors) console.error(`  - ${e}`);
-  process.exit(1);
+  return errors;
 }
 
-console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited, gallery verified, 8-target version parity verified, SHA256SUMS coverage verified, doc SRI digests verified.');
+const isDirectCli = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectCli) {
+  const errors = runLint();
+  if (errors.length > 0) {
+    console.error('✖ Lint failed:');
+    for (const e of errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited, gallery verified, 8-target version parity verified, SHA256SUMS coverage verified, doc SRI digests verified.');
+}

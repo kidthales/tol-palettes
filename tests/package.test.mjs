@@ -70,7 +70,7 @@ test('package.json exports ./sri and ./schemes.json configure types conditions',
   assert.equal(sri.version, pkg.version);
 });
 
-test('package.json exports ./schema/scheme.schema.json and schema uses hosted $id', () => {
+test('package.json exports ./schema/scheme.schema.json and schema uses hosted $id', async () => {
   assert.equal(pkg.exports['./schema/scheme.schema.json'], './schema/scheme.schema.json');
   const resolvedUrl = import.meta.resolve('@kidthales/tol-palettes/schema/scheme.schema.json');
   const expectedPath = join(root, 'schema', 'scheme.schema.json');
@@ -78,6 +78,28 @@ test('package.json exports ./schema/scheme.schema.json and schema uses hosted $i
 
   const schema = JSON.parse(readFileSync(expectedPath, 'utf8'));
   assert.equal(schema.$id, 'https://tol-palettes.kidthales.com/schema/scheme.schema.json');
+
+  const imported = await import('@kidthales/tol-palettes/schema/scheme.schema.json', { with: { type: 'json' } });
+  assert.equal(imported.default.$id, 'https://tol-palettes.kidthales.com/schema/scheme.schema.json');
+});
+
+test('unexported schema/data subpaths and missing JSON import attribute fail closed', async () => {
+  for (const unexported of [
+    '@kidthales/tol-palettes/schema',
+    '@kidthales/tol-palettes/schema/other.json',
+    '@kidthales/tol-palettes/data/schemes/bright.json',
+  ]) {
+    assert.throws(
+      () => import.meta.resolve(unexported),
+      { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' },
+      `Expected ERR_PACKAGE_PATH_NOT_EXPORTED for ${unexported}`,
+    );
+  }
+
+  await assert.rejects(
+    () => import('@kidthales/tol-palettes/schema/scheme.schema.json'),
+    { code: 'ERR_IMPORT_ATTRIBUTE_MISSING' },
+  );
 });
 
 test('external ESM consumer import and TypeScript declaration integrity', async () => {

@@ -456,7 +456,6 @@ export function generateGallery(opts = {}) {
   const galleryDir = join(targetDist, 'gallery');
   const gallerySchemaDir = join(galleryDir, 'schema');
   rmSync(galleryDir, { recursive: true, force: true });
-  mkdirSync(galleryDir, { recursive: true });
   mkdirSync(gallerySchemaDir, { recursive: true });
   writeFileSync(join(galleryDir, 'index.html'), generateGalleryHtml());
   writeFileSync(join(galleryDir, 'gallery.js'), generateGalleryJs());
