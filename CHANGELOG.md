@@ -5,6 +5,19 @@ All notable changes to `@kidthales/tol-palettes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-alpha.1] - 2026-11-14
+
+### Added
+- **Deterministic Version Synchronization (`tools/sync-version.mjs`)**: Added `npm run sync:version` with SemVer-to-PEP-440 mapping, PyPI `Development Status` classifier synchronization, atomic rollback on failure, and automated updates for pinned CDN `@<version>` and SHA-384 SRI digests in `docs/css.md`, `SECURITY.md`, and `CONTRIBUTING.md` (#89).
+- **Python `__version__` & Release Manifest Coverage**: Exported `__version__` in `dist/py/tol_palettes.py` (`tools/generate-py.mjs`) and added `dist/js/index.js` to `dist/manifest.json` and `dist/SHA256SUMS.txt` (`tools/package-assets.mjs`) (#89).
+- **Supply-Chain & Release Pipeline Hardening**: Added 8-target version parity, `SHA256SUMS.txt` standalone upload coverage, and doc SRI verification gates in `tools/lint.mjs`, plus regression tests in `tests/sync-version.test.mjs` and `tests/ci.test.mjs` (#89, #90).
+- **JSON Schema Subpath Export & Hosted `$id`**: Added `"./schema/scheme.schema.json"` to `package.json` `exports`, updated `schema/scheme.schema.json` `$id` to `https://tol-palettes.kidthales.com/schema/scheme.schema.json`, and published `dist/gallery/schema/scheme.schema.json` via `tools/generate-gallery.mjs` (#91).
+
+### Changed
+- **Pre-Release Registry Routing & Sigstore Attestations**: Updated `.github/workflows/release.yml` to publish SemVer prereleases under npm `--tag next` (`--tag latest` for stable), validate PEP 440 parity in `tag-guard`, forward `ref:` on `workflow_dispatch` checkouts, and attest all 10 standalone release assets via Sigstore (#90).
+- **Upstream SRON Crosscheck**: Verified zero colour drift across all 22 schemes against upstream SRON sources (`node tools/extract.mjs --check`) and refreshed `source.retrieved` to `2026-11-14` across `data/schemes/*.json` and `docs/crosscheck-report.md` (#91).
+- **Version Bump (`1.0.0-alpha.1`)**: Synchronized `package.json`, `package-lock.json`, `pyproject.toml` (`1.0.0a1`, `"Development Status :: 3 - Alpha"`), `CITATION.cff` (`2026-11-14`), `dist/godot/addons/tol_palettes/plugin.cfg`, `dist/py/tol_palettes.py`, `dist/sri.json`, `dist/manifest.json`, `dist/SHA256SUMS.txt`, and pinned CDN/SRI documentation references (#91).
+
 ## [0.3.1] - 2026-11-06
 
 For the full narrative release notes, see [`docs/RELEASE_NOTES_V0_3_1.md`](docs/RELEASE_NOTES_V0_3_1.md).

@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from '../tools/validate.mjs';
 import {
+  generateGallery,
   generateGalleryHtml,
   generateGalleryJs,
   contrastRatio,
@@ -70,6 +72,22 @@ test('dist/gallery/CNAME exists and contains custom domain', () => {
   const cnamePath = join(root, 'dist', 'gallery', 'CNAME');
   const cname = readFileSync(cnamePath, 'utf8');
   assert.equal(cname, 'tol-palettes.kidthales.com\n');
+});
+
+test('dist/gallery/schema/scheme.schema.json exists, is byte-identical to schema/scheme.schema.json, and uses hosted $id', () => {
+  const srcSchemaPath = join(root, 'schema', 'scheme.schema.json');
+  const gallerySchemaPath = join(root, 'dist', 'gallery', 'schema', 'scheme.schema.json');
+  assert.ok(existsSync(gallerySchemaPath), 'dist/gallery/schema/scheme.schema.json must exist');
+
+  const srcBytes = readFileSync(srcSchemaPath);
+  const galleryBytes = readFileSync(gallerySchemaPath);
+  assert.ok(
+    srcBytes.equals(galleryBytes),
+    'dist/gallery/schema/scheme.schema.json must be byte-identical to schema/scheme.schema.json',
+  );
+
+  const parsed = JSON.parse(galleryBytes.toString('utf8'));
+  assert.equal(parsed.$id, 'https://tol-palettes.kidthales.com/schema/scheme.schema.json');
 });
 
 test('gallery renders all 22 schemes with copyable hex buttons, contrast ratios and keyboard controls', () => {
@@ -166,4 +184,43 @@ test('canvas preview theme tokens and button contrast ratios meet WCAG AAA witho
   assert.match(html, /\.swatch-card\s*\{[^}]*color:\s*var\(--canvas-fg\);/);
   assert.match(html, /\.swatch-card\s*\{[^}]*border:\s*1px solid var\(--canvas-border\);/);
   assert.match(html, /\.swatch-chip\s*\{[^}]*border-block-end:\s*1px solid var\(--canvas-border\);/);
+});
+
+test('generateGallery writes isolated outDir, purges stale schema files, and enforces path-jail boundaries', () => {
+  const tempOut = mkdtempSync(join(tmpdir(), 'tol_gallery_test_'));
+  try {
+    const staleSchemaDir = join(tempOut, 'gallery', 'schema');
+    mkdirSync(staleSchemaDir, { recursive: true });
+    const staleRootFile = join(tempOut, 'gallery', 'stale.txt');
+    const staleSchemaFile = join(staleSchemaDir, 'stale.json');
+    writeFileSync(staleRootFile, 'stale', 'utf8');
+    writeFileSync(staleSchemaFile, '{}', 'utf8');
+
+    const { galleryDir } = generateGallery({ outDir: tempOut, allowedRoot: tmpdir() });
+
+    assert.ok(!existsSync(staleRootFile), 'Stale file in gallery/ must be removed on regeneration');
+    assert.ok(!existsSync(staleSchemaFile), 'Stale file in gallery/schema/ must be removed on regeneration');
+    assert.ok(existsSync(join(galleryDir, 'index.html')), 'index.html must be generated');
+    assert.ok(existsSync(join(galleryDir, 'gallery.js')), 'gallery.js must be generated');
+    assert.ok(existsSync(join(galleryDir, 'CNAME')), 'CNAME must be generated');
+
+    const srcSchema = readFileSync(join(root, 'schema', 'scheme.schema.json'));
+    const generatedSchema = readFileSync(join(galleryDir, 'schema', 'scheme.schema.json'));
+    assert.ok(srcSchema.equals(generatedSchema), 'Generated gallery schema must be byte-identical to source schema');
+  } finally {
+    rmSync(tempOut, { recursive: true, force: true });
+  }
+
+  assert.throws(
+    () => generateGallery({ outDir: tmpdir() }),
+    /refusing to write outside allowed jail boundary/,
+  );
+  assert.throws(
+    () => generateGallery({ outDir: join(root, 'schema') }),
+    /refusing to write to protected path/,
+  );
+  assert.throws(
+    () => generateGallery({ outDir: '' }),
+    /Invalid outDir/,
+  );
 });

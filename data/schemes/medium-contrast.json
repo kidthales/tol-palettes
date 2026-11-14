@@ -35,7 +35,7 @@
   ],
   "interpolation": "none",
   "source": {
-    "retrieved": "2026-10-18",
+    "retrieved": "2026-11-14",
     "siteFigure": "fig:scheme_mediumcontrast",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_mediumcontrast",
     "module": "tol_cset('medium-contrast')",

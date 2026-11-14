@@ -1,9 +1,10 @@
 // Generates a self-contained, offline-capable HTML gallery of all 22 Paul Tol
-// schemes into dist/gallery/index.html and dist/gallery/gallery.js.
+// schemes into dist/gallery/index.html, dist/gallery/gallery.js, and
+// dist/gallery/schema/scheme.schema.json.
 // Uses the generated CSS custom properties from generate-css.mjs, renders
 // copyable hex values, bad-data colours, interpolation gradients, and WCAG 2.x
 // contrast ratios against white (#FFFFFF) and black (#000000).
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
@@ -453,11 +454,13 @@ export function generateGalleryJs() {
 export function generateGallery(opts = {}) {
   const targetDist = resolveOutDir(opts);
   const galleryDir = join(targetDist, 'gallery');
+  const gallerySchemaDir = join(galleryDir, 'schema');
   rmSync(galleryDir, { recursive: true, force: true });
-  mkdirSync(galleryDir, { recursive: true });
+  mkdirSync(gallerySchemaDir, { recursive: true });
   writeFileSync(join(galleryDir, 'index.html'), generateGalleryHtml());
   writeFileSync(join(galleryDir, 'gallery.js'), generateGalleryJs());
   writeFileSync(join(galleryDir, 'CNAME'), 'tol-palettes.kidthales.com\n');
+  copyFileSync(join(root, 'schema', 'scheme.schema.json'), join(gallerySchemaDir, 'scheme.schema.json'));
   return { galleryDir };
 }
 
@@ -465,5 +468,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const cliOutDir = parseCliOutDir();
   const opts = cliOutDir ? { outDir: cliOutDir } : {};
   generateGallery(opts);
-  console.log('Wrote dist/gallery/index.html, dist/gallery/gallery.js, and dist/gallery/CNAME.');
+  console.log('Wrote dist/gallery/index.html, dist/gallery/gallery.js, dist/gallery/CNAME, and dist/gallery/schema/scheme.schema.json.');
 }

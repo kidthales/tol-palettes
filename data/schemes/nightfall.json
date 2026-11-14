@@ -57,7 +57,7 @@
   "bad": "#FFFFFF",
   "interpolation": "either",
   "source": {
-    "retrieved": "2026-10-18",
+    "retrieved": "2026-11-14",
     "siteFigure": "fig:scheme_nightfall",
     "siteUrl": "https://sronpersonalpages.nl/~pault/#fig:scheme_nightfall",
     "module": "tol_cmap('nightfall')",
