@@ -25,6 +25,38 @@ function isWithinRoot(resolvedRoot, candidate) {
   return !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
 }
 
+function hasInvalidExportSegments(pattern) {
+  const afterPrefix = pattern.slice(2);
+  if (afterPrefix.split('/').some((seg) => seg === '')) {
+    return true;
+  }
+  return [pattern, pattern.replace(/\*/g, '')].some(
+    (candidate) =>
+      candidate.includes('\\') ||
+      INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
+      candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+  );
+}
+
+function isValidSubpathKey(subpath, errors) {
+  if (subpath === '.') {
+    return true;
+  }
+  if (!subpath.startsWith('./')) {
+    errors.push(`[exports] Subpath key "${subpath}" must equal "." or start with "./".`);
+    return false;
+  }
+  if ((subpath.match(/\*/g) ?? []).length > 1) {
+    errors.push(`[exports] Subpath key "${subpath}" must not contain more than one "*" wildcard.`);
+    return false;
+  }
+  if (hasInvalidExportSegments(subpath)) {
+    errors.push(`[exports] Subpath key "${subpath}" contains invalid path segment.`);
+    return false;
+  }
+  return true;
+}
+
 function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
   if (node === null) {
     return;
@@ -87,16 +119,7 @@ function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
     errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
     return;
   }
-  const hasEmptySegment = node.length > 2 && node.slice(2).split('/').some((seg) => seg === '');
-  const hasInvalidSegment =
-    hasEmptySegment ||
-    [node, node.replace(/\*/g, '')].some(
-      (candidate) =>
-        candidate.includes('\\') ||
-        INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
-        candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
-    );
-  if (hasInvalidSegment) {
+  if (hasInvalidExportSegments(node)) {
     errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
     return;
   }
@@ -147,6 +170,9 @@ export function auditPackageExports(targetRoot, pkg) {
       auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
     } else {
       for (const [subpath, target] of Object.entries(exportsField)) {
+        if (subpath.startsWith('.') && !isValidSubpathKey(subpath, errors)) {
+          continue;
+        }
         auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
       }
     }

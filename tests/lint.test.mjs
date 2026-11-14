@@ -441,3 +441,79 @@ test('auditPackageExports enforces subpath/condition key grammar and rejects emp
     );
   });
 });
+
+test('auditPackageExports validates LHS subpath key syntax before auditing RHS targets', () => {
+  withTempRoot((dir) => {
+    mkdirSync(join(dir, 'schema'), { recursive: true });
+    mkdirSync(join(dir, 'dist', 'js'), { recursive: true });
+    writeFileSync(join(dir, 'schema', 'scheme.schema.json'), '{}', 'utf8');
+    writeFileSync(join(dir, 'dist', 'js', 'index.js'), '', 'utf8');
+
+    const badPrefixErrors = auditPackageExports(dir, {
+      exports: {
+        '.invalid': './dist/js/index.js',
+        '..': './dist/js/index.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(badPrefixErrors.length, 2, `Expected 2 LHS prefix errors, got: ${JSON.stringify(badPrefixErrors)}`);
+    assert.ok(badPrefixErrors.every((e) => e.includes('must equal "." or start with "./"')));
+
+    const multiWildcardKeyErrors = auditPackageExports(dir, {
+      exports: {
+        './a/*/b/*': './dist/js/*',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      multiWildcardKeyErrors.length,
+      1,
+      `Expected 1 LHS multi-wildcard error, got: ${JSON.stringify(multiWildcardKeyErrors)}`,
+    );
+    assert.ok(multiWildcardKeyErrors[0].includes('Subpath key "./a/*/b/*" must not contain more than one "*" wildcard'));
+
+    const invalidSegmentKeyErrors = auditPackageExports(dir, {
+      exports: {
+        './../sub': './dist/js/index.js',
+        '././sub': './dist/js/index.js',
+        './*../sub': './dist/js/*',
+        './': './dist/js/index.js',
+        './dist/': './dist/js/*',
+        './a//b': './dist/js/index.js',
+        './a\\b': './dist/js/index.js',
+        './%2e%2e/sub': './dist/js/index.js',
+        './node_modules/pkg': './dist/js/index.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      invalidSegmentKeyErrors.length,
+      9,
+      `Expected 9 LHS invalid-segment errors, got: ${JSON.stringify(invalidSegmentKeyErrors)}`,
+    );
+    assert.ok(invalidSegmentKeyErrors.every((e) => e.includes('contains invalid path segment')));
+
+    // Invalid LHS subpath key skips RHS target audit (e.g. non-existent target produces only the LHS error)
+    const skippedRhsErrors = auditPackageExports(dir, {
+      exports: {
+        '.invalid': './dist/missing.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(skippedRhsErrors.length, 1);
+    assert.ok(skippedRhsErrors[0].includes('Subpath key ".invalid"'));
+
+    // Valid LHS subpath keys with "." and single wildcards pass
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          '.': './dist/js/index.js',
+          './a/*/b': './dist/js/*',
+          './root-*': './dist/js/*',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+  });
+});
