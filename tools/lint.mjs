@@ -9,8 +9,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
@@ -25,7 +25,7 @@ function isWithinRoot(resolvedRoot, candidate) {
   return !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
 }
 
-function auditExportNode(subpath, node, resolvedRoot, errors) {
+function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
   if (node === null) {
     return;
   }
@@ -35,7 +35,7 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
       return;
     }
     for (const item of node) {
-      auditExportNode(subpath, item, resolvedRoot, errors);
+      auditExportNode(subpath, item, resolvedRoot, realRoot, errors);
     }
     return;
   }
@@ -46,7 +46,7 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
       return;
     }
     for (const value of values) {
-      auditExportNode(subpath, value, resolvedRoot, errors);
+      auditExportNode(subpath, value, resolvedRoot, realRoot, errors);
     }
     return;
   }
@@ -58,10 +58,22 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     errors.push(`[exports] Export "${subpath}" target "${node}" must start with "./".`);
     return;
   }
-  const hasWildcard = node.includes('*');
+  const wildcardCount = (node.match(/\*/g) ?? []).length;
+  if (wildcardCount > 1) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must not contain more than one "*" wildcard.`);
+    return;
+  }
+  const hasWildcard = wildcardCount === 1;
   const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
   const wildcardEmptyPath = resolve(resolvedRoot, node.replace(/\*/g, ''));
-  const checkPath = hasWildcard ? node.replace(/\/?\*.*$/, '') : node;
+  let checkPath = node;
+  if (hasWildcard) {
+    const beforeWildcard = node.slice(0, node.indexOf('*'));
+    checkPath = beforeWildcard.endsWith('/') ? beforeWildcard.slice(0, -1) : posix.dirname(beforeWildcard);
+    if (!checkPath || checkPath === './') {
+      checkPath = '.';
+    }
+  }
   const resolvedCheckPath = resolve(resolvedRoot, checkPath);
   if (
     !isWithinRoot(resolvedRoot, wildcardSamplePath) ||
@@ -82,14 +94,20 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     return;
   }
   let targetStat;
+  let realCheckPath;
   try {
     targetStat = statSync(resolvedCheckPath);
+    realCheckPath = realpathSync(resolvedCheckPath);
   } catch (err) {
     if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
       errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
     } else {
       errors.push(`[exports] Export "${subpath}" target "${node}" could not be inspected: ${err.message}`);
     }
+    return;
+  }
+  if (!isWithinRoot(realRoot, realCheckPath)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root via symlink.`);
     return;
   }
   if (hasWildcard) {
@@ -104,13 +122,19 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
 export function auditPackageExports(targetRoot, pkg) {
   const errors = [];
   const resolvedRoot = resolve(targetRoot);
+  let realRoot = resolvedRoot;
+  try {
+    realRoot = realpathSync(resolvedRoot);
+  } catch {
+    // Fallback to resolvedRoot if targetRoot does not exist; per-target statSync will fail closed.
+  }
   const exportsField = pkg?.exports;
   if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
     for (const [subpath, target] of Object.entries(exportsField)) {
-      auditExportNode(subpath, target, resolvedRoot, errors);
+      auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
     }
   } else if (exportsField !== undefined && exportsField !== null) {
-    auditExportNode('.', exportsField, resolvedRoot, errors);
+    auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
   }
   if (pkg?.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
     errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');

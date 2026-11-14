@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditHostedSchema, auditPackageExports, EXPECTED_SCHEMA_ID } from '../tools/lint.mjs';
@@ -267,5 +267,90 @@ test('auditHostedSchema passes on matching $id/bytes and fails closed without cr
     const eisdirErrors = auditHostedSchema(dir);
     assert.equal(eisdirErrors.length, 1);
     assert.match(eisdirErrors[0], /^\[gallery\] Failed to read dist\/gallery\/schema\/scheme\.schema\.json: .*EISDIR/);
+  });
+});
+
+test('auditPackageExports enforces wildcard arity, inline filename-prefix wildcards, and symlink containment', () => {
+  withTempRoot((dir) => {
+    mkdirSync(join(dir, 'schema'), { recursive: true });
+    mkdirSync(join(dir, 'dist', 'icons'), { recursive: true });
+    mkdirSync(join(dir, 'dist', 'js'), { recursive: true });
+    writeFileSync(join(dir, 'schema', 'scheme.schema.json'), '{}', 'utf8');
+    writeFileSync(join(dir, 'dist', 'js', 'index.js'), '', 'utf8');
+
+    // Valid single inline filename-prefix wildcard (parent directory exists) and root-level inline wildcard
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          './icons/*': './dist/icons/icon-*.svg',
+          './root-*': './root-*.json',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+
+    // Inline wildcard whose parent directory is missing or is a file fails closed
+    const missingInlineParentErrors = auditPackageExports(dir, {
+      exports: {
+        './missing/*': './dist/missing/icon-*.svg',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(missingInlineParentErrors.length, 1);
+    assert.ok(missingInlineParentErrors[0].includes('does not exist on disk'));
+
+    const fileInlineParentErrors = auditPackageExports(dir, {
+      exports: {
+        './file-prefix/*': './dist/js/index.js/icon-*.svg',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(fileInlineParentErrors.length, 1);
+    assert.ok(fileInlineParentErrors[0].includes('prefix must resolve to a directory'));
+
+    // Multi-wildcard targets are rejected regardless of directory or inline placement
+    const multiWildcardErrors = auditPackageExports(dir, {
+      exports: {
+        './multi-dir/*': './dist/js/*/sub/*.js',
+        './multi-inline/*': './dist/icons/icon-*-*.svg',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(multiWildcardErrors.length, 2, `Expected 2 multi-wildcard errors, got: ${JSON.stringify(multiWildcardErrors)}`);
+    assert.ok(multiWildcardErrors.every((e) => e.includes('must not contain more than one "*" wildcard')));
+
+    // Symlink / junction escape outside package root must fail closed; internal symlink stays permitted
+    symlinkSync(join(dir, 'dist', 'js'), join(dir, 'dist', 'alias'), 'junction');
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          './alias/*': './dist/alias/*',
+          './alias-index': './dist/alias/index.js',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+
+    withTempRoot((outsideDir) => {
+      writeFileSync(join(outsideDir, 'secret.js'), '', 'utf8');
+      symlinkSync(outsideDir, join(dir, 'dist', 'escape'), 'junction');
+
+      const symlinkEscapeErrors = auditPackageExports(dir, {
+        exports: {
+          './escape-file': './dist/escape/secret.js',
+          './escape-glob/*': './dist/escape/*',
+          './escape-inline/*': './dist/escape/sec-*.js',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      });
+      assert.equal(
+        symlinkEscapeErrors.length,
+        3,
+        `Expected 3 symlink escape errors, got: ${JSON.stringify(symlinkEscapeErrors)}`,
+      );
+      assert.ok(symlinkEscapeErrors.every((e) => e.includes('resolves outside package root via symlink')));
+    });
   });
 });
