@@ -9,7 +9,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
@@ -18,6 +18,7 @@ import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXPECTED_SCHEMA_ID = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
+const INVALID_EXPORT_TARGET_RE = /(?:^|\/)node_modules(?:\/|$)|%(?:2e|2f|5c)/i;
 
 function isWithinRoot(resolvedRoot, candidate) {
   const rel = relative(resolvedRoot, candidate);
@@ -57,9 +58,10 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     errors.push(`[exports] Export "${subpath}" target "${node}" must start with "./".`);
     return;
   }
+  const hasWildcard = node.includes('*');
   const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
   const wildcardEmptyPath = resolve(resolvedRoot, node.replace(/\*/g, ''));
-  const checkPath = node.includes('*') ? node.replace(/\/?\*.*$/, '') : node;
+  const checkPath = hasWildcard ? node.replace(/\/?\*.*$/, '') : node;
   const resolvedCheckPath = resolve(resolvedRoot, checkPath);
   if (
     !isWithinRoot(resolvedRoot, wildcardSamplePath) ||
@@ -70,14 +72,32 @@ function auditExportNode(subpath, node, resolvedRoot, errors) {
     return;
   }
   const hasInvalidSegment = [node, node.replace(/\*/g, '')].some(
-    (candidate) => candidate.includes('\\') || candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+    (candidate) =>
+      candidate.includes('\\') ||
+      INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
+      candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
   );
   if (hasInvalidSegment) {
     errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
     return;
   }
-  if (!existsSync(resolvedCheckPath)) {
-    errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
+  let targetStat;
+  try {
+    targetStat = statSync(resolvedCheckPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
+    } else {
+      errors.push(`[exports] Export "${subpath}" target "${node}" could not be inspected: ${err.message}`);
+    }
+    return;
+  }
+  if (hasWildcard) {
+    if (!targetStat.isDirectory()) {
+      errors.push(`[exports] Export "${subpath}" wildcard target "${node}" prefix must resolve to a directory.`);
+    }
+  } else if (!targetStat.isFile()) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must resolve to a file.`);
   }
 }
 

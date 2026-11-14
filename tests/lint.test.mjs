@@ -151,6 +151,65 @@ test('auditPackageExports handles null subpath restrictions, nested conditional 
       }),
       [],
     );
+
+    // Percent-encoded traversal tokens and node_modules segments (including post-wildcard)
+    const encodedAndModulesErrors = auditPackageExports(dir, {
+      exports: {
+        './encoded-dot': './dist/%2e%2e/outside.js',
+        './encoded-glob': './dist/*/%2E%2E/%2foutside.js',
+        './encoded-backslash': './dist/%5Coutside.js',
+        './encoded-coalesce': './dist/%2*e/index.js',
+        './nm-direct': './node_modules/pkg/index.js',
+        './nm-glob': './dist/*/node_modules/pkg/index.js',
+        './nm-coalesce': './dist/*node_modules/index.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(
+      encodedAndModulesErrors.length,
+      7,
+      `Expected 7 encoded/node_modules segment errors, got: ${JSON.stringify(encodedAndModulesErrors)}`,
+    );
+    assert.ok(encodedAndModulesErrors.every((e) => e.includes('contains invalid path segment')));
+
+    // Directory vs. regular-file enforcement on non-wildcard and wildcard targets
+    writeFileSync(join(dir, 'dist', 'js', 'my_node_modules_note.js'), '', 'utf8');
+    assert.deepEqual(
+      auditPackageExports(dir, {
+        exports: {
+          './note': './dist/js/my_node_modules_note.js',
+          './schema/scheme.schema.json': './schema/scheme.schema.json',
+        },
+      }),
+      [],
+    );
+
+    const dirTargetErrors = auditPackageExports(dir, {
+      exports: {
+        './js': './dist/js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(dirTargetErrors.length, 1);
+    assert.ok(dirTargetErrors[0].includes('must resolve to a file'));
+
+    const fileWildcardErrors = auditPackageExports(dir, {
+      exports: {
+        './file-glob/*': './dist/js/index.js/*',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(fileWildcardErrors.length, 1);
+    assert.ok(fileWildcardErrors[0].includes('prefix must resolve to a directory'));
+
+    const throughFileErrors = auditPackageExports(dir, {
+      exports: {
+        './through-file': './dist/js/index.js/sub.js',
+        './schema/scheme.schema.json': './schema/scheme.schema.json',
+      },
+    });
+    assert.equal(throughFileErrors.length, 1);
+    assert.ok(throughFileErrors[0].includes('does not exist on disk'));
   });
 });
 
