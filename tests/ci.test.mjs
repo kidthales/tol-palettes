@@ -64,6 +64,19 @@ test('-CI with -Gate1Only exits non-zero and enforces fail-closed contract', () 
   assert.ok(combined.includes('-Gate1Only'), `Expected "-Gate1Only" in output, got: ${combined}`);
 });
 
+test('-Gate0Only combined with -Gate1Only exits non-zero and rejects mutual exclusion', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-Gate1Only'], {
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status when combining -Gate0Only and -Gate1Only');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(
+    combined.includes('-Gate0Only and -Gate1Only cannot be combined'),
+    `Expected mutual-exclusion error in output, got: ${combined}`,
+  );
+});
+
 test('valid repository workflows pass Gate 0 and Gate 1', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only'], {
     cwd: root,
@@ -155,7 +168,8 @@ test('all third-party actions across all workflow files are pinned to 40-charact
   const files = readdirSync(workflowsDir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   assert.ok(files.length > 0, 'Must have workflow files');
 
-  const shaPattern = /@[0-9a-fA-F]{40}/;
+  const shaPattern = /@[0-9a-fA-F]{40}$/;
+  const dockerDigestPattern = /@sha256:[0-9a-fA-F]{64}$/;
 
   for (const file of files) {
     const content = readFileSync(join(workflowsDir, file), 'utf8');
@@ -169,11 +183,23 @@ test('all third-party actions across all workflow files are pinned to 40-charact
           !actionRef.startsWith('$'),
           `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not start with "$" (use "./" for same-repository references)`,
         );
-        if (
-          actionRef.startsWith('./') ||
-          actionRef.startsWith('../') ||
-          actionRef.startsWith('docker://')
-        ) {
+        assert.ok(
+          !actionRef.startsWith('../'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not use "../" relative path (must start with "./")`,
+        );
+        if (actionRef.startsWith('./')) {
+          assert.ok(
+            !actionRef.includes('..') && !actionRef.includes('\\') && !actionRef.includes('@'),
+            `Same-repository reference in ${file} line ${i + 1} ("${actionRef}") must be canonical and must not specify an @ref`,
+          );
+          continue;
+        }
+        if (actionRef.startsWith('docker://')) {
+          assert.match(
+            actionRef,
+            dockerDigestPattern,
+            `Docker action reference in ${file} line ${i + 1} ("${actionRef}") must be pinned to a @sha256 digest`,
+          );
           continue;
         }
         assert.match(
@@ -653,6 +679,48 @@ jobs:
       assert.ok(combined.includes("'$' prefix is invalid"));
     },
   );
+
+  // Single-line workflow file must be evaluated as a full line, not scalar [char] indexing
+  withTempFixture(
+    {
+      'single_line.yml': 'uses: $/.github/workflows/ci.yml',
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  // Missing or empty workflows directory must fail closed under -Gate1Only
+  withTempFixture({}, (emptyDir) => {
+    const emptyRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', emptyDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(emptyRes.status, 0, 'Expected empty workflows directory to fail closed under -Gate1Only');
+    const emptyOut = (emptyRes.stdout || '') + (emptyRes.stderr || '');
+    assert.ok(emptyOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(emptyOut.includes('No workflow files'));
+
+    const missingDir = join(emptyDir, 'nonexistent');
+    const missingRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', missingDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(missingRes.status, 0, 'Expected missing workflows directory to fail closed under -Gate1Only');
+    const missingOut = (missingRes.stdout || '') + (missingRes.stderr || '');
+    assert.ok(missingOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(missingOut.includes('Workflows directory not found'));
+  });
 });
 
 test('auditWorkflows fails when actions/checkout is missing persist-credentials: false', () => {

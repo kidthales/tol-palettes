@@ -36,6 +36,7 @@ param(
     [string]$WorkflowsPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
@@ -121,11 +122,6 @@ if ($Gate0Only -and $Gate1Only) {
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " tol-palettes Local CI Pipeline$(if ($CI) { ' [-CI Fail-Closed Mode]' } else { '' })" -ForegroundColor Cyan
 Write-Host " Root: $RootDir" -ForegroundColor Gray
-if ($Gate0Only -and $Gate1Only) {
-    [Console]::Error.WriteLine("ERROR: -Gate0Only and -Gate1Only cannot be combined.")
-    exit 1
-}
-
 Write-Host "====================================================" -ForegroundColor Cyan
 
 $GateResults = [ordered]@{
@@ -184,46 +180,52 @@ try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
         # Check action pins in all workflow files
-        if (Test-Path $EffectiveWorkflowsDir) {
-            $WorkflowFiles = Get-ChildItem -Path $EffectiveWorkflowsDir -File | Where-Object { $_.Extension -in @(".yml", ".yaml") }
-            $UnpinnedFound = $false
-            foreach ($wf in $WorkflowFiles) {
-                $lines = Get-Content $wf.FullName
-                for ($i = 0; $i -lt $lines.Count; $i++) {
-                    $line = $lines[$i]
-                    if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
-                        $target = $matches[1]
-                        if ($target -match '^\$') {
-                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('$' prefix is invalid; use './' for same-repository references)"
+        if (-not (Test-Path -Path $EffectiveWorkflowsDir -PathType Container)) {
+            throw "Gate 1 Failed: Workflows directory not found: $EffectiveWorkflowsDir"
+        }
+
+        $WorkflowFiles = @(Get-ChildItem -Path $EffectiveWorkflowsDir -File | Where-Object { $_.Extension -in @(".yml", ".yaml") })
+        if ($WorkflowFiles.Count -eq 0) {
+            throw "Gate 1 Failed: No workflow files (*.yml, *.yaml) found in $EffectiveWorkflowsDir"
+        }
+
+        $UnpinnedFound = $false
+        foreach ($wf in $WorkflowFiles) {
+            $lines = @(Get-Content -Path $wf.FullName)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
+                    $target = $matches[1]
+                    if ($target -match '^\$') {
+                        Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('$' prefix is invalid; use './' for same-repository references)"
+                        $UnpinnedFound = $true
+                    } elseif ($target -match '^\.\./') {
+                        Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical relative path; must start with './')"
+                        $UnpinnedFound = $true
+                    } elseif ($target -match '^\./') {
+                        if ($target -match '\.\.|\\') {
+                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical local path)"
                             $UnpinnedFound = $true
-                        } elseif ($target -match '^\.\./') {
-                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical relative path; must start with './')"
+                        } elseif ($target -match '@') {
+                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('./' same-repository references must not specify an @ref)"
                             $UnpinnedFound = $true
-                        } elseif ($target -match '^\./') {
-                            if ($target -match '\.\.|\\') {
-                                Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical local path)"
-                                $UnpinnedFound = $true
-                            } elseif ($target -match '@') {
-                                Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('./' same-repository references must not specify an @ref)"
-                                $UnpinnedFound = $true
-                            }
-                        } elseif ($target -match '^docker://') {
-                            if ($target -notmatch '@sha256:[0-9a-fA-F]{64}$') {
-                                Write-Error "Unpinned docker action in $($wf.Name) line $($i+1): $target (must pin to @sha256 digest)"
-                                $UnpinnedFound = $true
-                            }
-                        } else {
-                            if ($target -notmatch '@[0-9a-fA-F]{40}$') {
-                                Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
-                                $UnpinnedFound = $true
-                            }
+                        }
+                    } elseif ($target -match '^docker://') {
+                        if ($target -notmatch '@sha256:[0-9a-fA-F]{64}$') {
+                            Write-Error "Unpinned docker action in $($wf.Name) line $($i+1): $target (must pin to @sha256 digest)"
+                            $UnpinnedFound = $true
+                        }
+                    } else {
+                        if ($target -notmatch '@[0-9a-fA-F]{40}$') {
+                            Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
+                            $UnpinnedFound = $true
                         }
                     }
                 }
             }
-            if ($UnpinnedFound) {
-                throw "Gate 1 Failed: GitHub Actions commit SHA pin verification failed."
-            }
+        }
+        if ($UnpinnedFound) {
+            throw "Gate 1 Failed: GitHub Actions commit SHA pin verification failed."
         }
 
         # Check agent and scratch file leaks
@@ -298,7 +300,7 @@ try {
         }
 
         # PowerShell AST parse validation for scripts
-        $Ps1Files = Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules)[\\/]' }
+        $Ps1Files = @(Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules)[\\/]' })
         $ParseErrors = 0
         foreach ($ps in $Ps1Files) {
             $tokens = $null
