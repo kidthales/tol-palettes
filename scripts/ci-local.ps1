@@ -17,6 +17,8 @@
     Skips the distribution regeneration and drift verification step.
 .PARAMETER Gate0Only
     Executes Gate 0 workflow contract verification and exits.
+.PARAMETER Gate1Only
+    Executes Gate 1 action pin and agent leak verification and exits.
 .PARAMETER WorkflowsPath
     Optional path override to .github/workflows directory (for testing).
 .EXAMPLE
@@ -30,6 +32,7 @@ param(
     [switch]$Quick,
     [switch]$SkipGenerate,
     [switch]$Gate0Only,
+    [switch]$Gate1Only,
     [string]$WorkflowsPath = ""
 )
 
@@ -87,6 +90,7 @@ if ($CI) {
     if ($Quick) { $rejectedFlags += "-Quick" }
     if ($SkipGenerate) { $rejectedFlags += "-SkipGenerate" }
     if ($Gate0Only) { $rejectedFlags += "-Gate0Only" }
+    if ($Gate1Only) { $rejectedFlags += "-Gate1Only" }
     if ($rejectedFlags.Count -gt 0) {
         $flagList = $rejectedFlags -join ", "
         [Console]::Error.WriteLine("ERROR: -CI mode is fail-closed and cannot be combined with skip or quick flags ($flagList).")
@@ -109,9 +113,19 @@ if ($CI) {
 }
 
 
+if ($Gate0Only -and $Gate1Only) {
+    [Console]::Error.WriteLine("ERROR: -Gate0Only and -Gate1Only cannot be combined.")
+    exit 1
+}
+
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " tol-palettes Local CI Pipeline$(if ($CI) { ' [-CI Fail-Closed Mode]' } else { '' })" -ForegroundColor Cyan
 Write-Host " Root: $RootDir" -ForegroundColor Gray
+if ($Gate0Only -and $Gate1Only) {
+    [Console]::Error.WriteLine("ERROR: -Gate0Only and -Gate1Only cannot be combined.")
+    exit 1
+}
+
 Write-Host "====================================================" -ForegroundColor Cyan
 
 $GateResults = [ordered]@{
@@ -140,24 +154,26 @@ try {
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
     $EffectiveWorkflowsDir = if ($WorkflowsPath) { $WorkflowsPath } else { [System.IO.Path]::Combine($RootDir, ".github", "workflows") }
-    Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
-    try {
-        & node (Join-Path $RootDir "tools" "check-workflows.mjs") --workflows-dir $EffectiveWorkflowsDir
-        if ($LASTEXITCODE -ne 0) {
-            throw "Gate 0 workflow single-source verification failed."
+    if (-not $Gate1Only) {
+        Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
+        try {
+            & node (Join-Path $RootDir "tools" "check-workflows.mjs") --workflows-dir $EffectiveWorkflowsDir
+            if ($LASTEXITCODE -ne 0) {
+                throw "Gate 0 workflow single-source verification failed."
+            }
+            $GateResults["gate0_workflow_contract"] = "pass"
+            Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
+        } catch {
+            $GateResults["gate0_workflow_contract"] = "fail"
+            throw
+        } finally {
+            Exit-CiGate
         }
-        $GateResults["gate0_workflow_contract"] = "pass"
-        Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
-    } catch {
-        $GateResults["gate0_workflow_contract"] = "fail"
-        throw
-    } finally {
-        Exit-CiGate
-    }
 
-    if ($Gate0Only) {
-        Write-CiGateSummary $GateResults
-        exit 0
+        if ($Gate0Only) {
+            Write-CiGateSummary $GateResults
+            exit 0
+        }
     }
 
     # -------------------------------------------------------------
@@ -180,8 +196,24 @@ try {
                         if ($target -match '^\$') {
                             Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('$' prefix is invalid; use './' for same-repository references)"
                             $UnpinnedFound = $true
-                        } elseif ($target -notmatch '^(\./|\.\./|docker://)') {
-                            if ($target -notmatch '@[0-9a-fA-F]{40}') {
+                        } elseif ($target -match '^\.\./') {
+                            Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical relative path; must start with './')"
+                            $UnpinnedFound = $true
+                        } elseif ($target -match '^\./') {
+                            if ($target -match '\.\.|\\') {
+                                Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical local path)"
+                                $UnpinnedFound = $true
+                            } elseif ($target -match '@') {
+                                Write-Error "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('./' same-repository references must not specify an @ref)"
+                                $UnpinnedFound = $true
+                            }
+                        } elseif ($target -match '^docker://') {
+                            if ($target -notmatch '@sha256:[0-9a-fA-F]{64}$') {
+                                Write-Error "Unpinned docker action in $($wf.Name) line $($i+1): $target (must pin to @sha256 digest)"
+                                $UnpinnedFound = $true
+                            }
+                        } else {
+                            if ($target -notmatch '@[0-9a-fA-F]{40}$') {
                                 Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
                                 $UnpinnedFound = $true
                             }
@@ -231,6 +263,11 @@ try {
         throw
     } finally {
         Exit-CiGate
+    }
+
+    if ($Gate1Only) {
+        Write-CiGateSummary $GateResults
+        exit 0
     }
 
     # -------------------------------------------------------------

@@ -54,7 +54,17 @@ test('-CI with -SkipGenerate exits non-zero and enforces fail-closed contract', 
   assert.ok(combined.includes('-SkipGenerate'), `Expected "-SkipGenerate" in output, got: ${combined}`);
 });
 
-test('valid repository workflows pass Gate 0', () => {
+test('-CI with -Gate1Only exits non-zero and enforces fail-closed contract', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-CI', '-Gate1Only'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(combined.includes('fail-closed'), `Expected "fail-closed" in output, got: ${combined}`);
+  assert.ok(combined.includes('-Gate1Only'), `Expected "-Gate1Only" in output, got: ${combined}`);
+});
+
+test('valid repository workflows pass Gate 0 and Gate 1', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only'], {
     cwd: root,
     encoding: 'utf8',
@@ -63,6 +73,15 @@ test('valid repository workflows pass Gate 0', () => {
   const combined = (res.stdout || '') + (res.stderr || '');
   assert.equal(res.status, 0, `Expected Gate 0 to pass on repo workflows. Output: ${combined}`);
   assert.ok(combined.includes('All workflow run steps conform'), 'Expected success confirmation');
+
+  const gate1Res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  const gate1Out = (gate1Res.stdout || '') + (gate1Res.stderr || '');
+  assert.equal(gate1Res.status, 0, `Expected Gate 1 to pass on repo workflows. Output: ${gate1Out}`);
+  assert.ok(gate1Out.includes('[gate1_action_pins_and_leaks: PASS]'), 'Expected Gate 1 PASS summary');
 });
 
 test('fixture workflow with un-allowlisted inline step fails Gate 0', () => {
@@ -483,7 +502,7 @@ jobs:
   );
 });
 
-test('auditWorkflows and ci-local.ps1 reject any uses: starting with $ and ./ reusable workflows with @ref', () => {
+test('auditWorkflows and ci-local.ps1 Gate 1 reject any uses: starting with $, ../, and ./ references with @ref', () => {
   withTempFixture(
     {
       'dollar_job.yml': `name: DollarJob
@@ -499,14 +518,16 @@ jobs:
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
 
-      // Also verify ci-local.ps1 Gate 1 rejects it
-      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', dir], {
+      // Verify ci-local.ps1 Gate 1 directly rejects it without halting at Gate 0
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, GITHUB_ACTIONS: '' },
       });
       assert.notEqual(psRes.status, 0);
       const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate0_workflow_contract: NOT-APPLICABLE]'));
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
       assert.ok(combined.includes("'$' prefix is invalid"));
     },
   );
@@ -525,6 +546,78 @@ jobs:
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_step_ref.yml': `name: LocalStepRef
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local step with ref
+        uses: ./.github/actions/my-action@main
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("same-repository local action references must not specify an @ref")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'relative_parent.yml': `name: RelativeParent
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local parent relative
+        uses: ../local-action
+`,
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must start with './'"));
     },
   );
 
@@ -548,6 +641,16 @@ jobs:
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
     },
   );
 });
@@ -1065,12 +1168,6 @@ test('release.yml locks all actions/checkout steps and verify workflow_call to t
     "${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
   const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
 
-  assert.ok(
-    expectedRef.includes("format('refs/tags/{0}', github.event.release.tag_name)") &&
-      expectedRef.includes("format('refs/tags/{0}', inputs.tag)"),
-    'Expected expectedRef to qualify release.tag_name and inputs.tag with refs/tags/',
-  );
-
   let checkoutCount = 0;
   for (const jobId of expectedJobsWithCheckout) {
     const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
@@ -1083,7 +1180,13 @@ test('release.yml locks all actions/checkout steps and verify workflow_call to t
   assert.equal(checkoutCount, 5);
 
   assert.equal(releaseDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
-  assert.equal(releaseDoc?.jobs?.verify?.with?.ref, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+  const verifyRef = releaseDoc?.jobs?.verify?.with?.ref;
+  assert.equal(verifyRef, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
+  assert.ok(
+    verifyRef.includes("format('refs/tags/{0}', github.event.release.tag_name)") &&
+      verifyRef.includes("format('refs/tags/{0}', inputs.tag)"),
+    'Expected release.yml verify.with.ref to qualify release.tag_name and inputs.tag with refs/tags/',
+  );
 
   const pagesDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'pages.yml'), 'utf8'));
   assert.equal(pagesDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');

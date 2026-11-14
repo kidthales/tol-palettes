@@ -253,6 +253,9 @@ export function auditWorkflows(targetPath, options = {}) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
             }
+            if (uses.includes('@')) {
+              violations.push(`${wfName}: step '${stepName}' uses invalid local action target '${uses}' ('./' same-repository local action references must not specify an @ref)`);
+            }
           } else if (uses.startsWith('../')) {
             violations.push(`${wfName}: step '${stepName}' uses non-canonical relative path '${uses}' (must start with './')`);
           } else if (uses.startsWith('docker://')) {
