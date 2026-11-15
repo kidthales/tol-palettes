@@ -55,6 +55,64 @@ export const FORBIDDEN_COMMAND_PATTERNS = [
   { name: 'npm pack', regex: /\bnpm\s+pack\b/ },
 ];
 
+export const FORBIDDEN_NPM_OIDC_ENV_KEYS = ['NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_CONFIG__AUTHTOKEN'];
+
+function checkForbiddenEnvBindings(envObj, forbiddenKeys, contextLabel, violations) {
+  if (!envObj || typeof envObj !== 'object' || Array.isArray(envObj)) return;
+  const upperForbidden = new Set(forbiddenKeys.map((k) => k.toUpperCase()));
+  for (const key of Object.keys(envObj)) {
+    if (upperForbidden.has(key.toUpperCase()) || /^NPM_CONFIG_.*_AUTHTOKEN$/i.test(key)) {
+      violations.push(`${contextLabel} must not bind forbidden env '${key}' (tokenless OIDC required)`);
+    }
+  }
+}
+
+function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
+  const perms = pubNpm.permissions;
+  if (!perms || typeof perms !== 'object' || perms['id-token'] !== 'write') {
+    violations.push(`${wfName}: publish-npm job must declare permissions.id-token: write for OIDC Trusted Publishing`);
+  }
+
+  const envName = typeof pubNpm.environment === 'string' ? pubNpm.environment : pubNpm.environment?.name;
+  if (envName !== 'npm') {
+    violations.push(`${wfName}: publish-npm job must declare environment 'npm' for OIDC Trusted Publishing (got '${envName ?? ''}')`);
+  }
+
+  const steps = Array.isArray(pubNpm.steps) ? pubNpm.steps : [];
+  const setupNodeSteps = steps.filter(
+    (s) => s && typeof s === 'object' && typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'),
+  );
+  if (setupNodeSteps.length === 0) {
+    violations.push(`${wfName}: publish-npm job must include actions/setup-node with node-version: 24`);
+  } else {
+    for (const snStep of setupNodeSteps) {
+      const nv = snStep.with?.['node-version'];
+      if (nv !== 24 && nv !== '24') {
+        violations.push(`${wfName}: publish-npm job step '${snStep.name || 'setup-node'}' must set node-version: 24 (got '${nv ?? ''}')`);
+      }
+    }
+  }
+
+  checkForbiddenEnvBindings(doc.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, `${wfName}: workflow`, violations);
+  checkForbiddenEnvBindings(pubNpm.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, `${wfName}: publish-npm job`, violations);
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const stepLabel = `${wfName}: publish-npm step '${step.name || 'unnamed'}'`;
+    checkForbiddenEnvBindings(step.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, stepLabel, violations);
+    if (typeof step.run === 'string') {
+      if (/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\s*=/.test(step.run)) {
+        violations.push(`${stepLabel} must not assign NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
+      }
+      if (/\bNPM_CONFIG_(?:[A-Z0-9_]*_)?_AUTHTOKEN\s*=/i.test(step.run)) {
+        violations.push(`${stepLabel} must not assign NPM_CONFIG__AUTHTOKEN in run script`);
+      }
+      if (/(?:^|[\s;|&('"])--(?:[^\s=]*:)?_authToken(?:\s*=|\s|$)/i.test(step.run)) {
+        violations.push(`${stepLabel} must not pass --_authToken CLI flag in run script`);
+      }
+    }
+  }
+}
+
 /**
  * Checks whether a string contains any ${{ ... }} expression.
  * In GitHub Actions, expressions are expanded before invocation and backslash escaping
@@ -419,6 +477,11 @@ export function auditWorkflows(targetPath, options = {}) {
             }
           }
         }
+      }
+
+      // release.yml: tokenless OIDC Trusted Publishing contract in publish-npm
+      if (jobs['publish-npm']) {
+        auditPublishNpmOidcContract(wfName, doc, jobs['publish-npm'], violations);
       }
 
       // release.yml: provenance attestation in attach-assets

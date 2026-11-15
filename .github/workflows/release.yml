@@ -103,6 +103,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@kidthales/tol-palettes
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,7 +116,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
 
@@ -121,9 +124,12 @@ jobs:
         run: npm ci
 
       - name: Publish to npm (Idempotent with Provenance)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          NPM_VER=$(npm --version)
+          if ! node -e 'const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(process.argv[1].trim()); if (!m) process.exit(1); const maj = +m[1], min = +m[2], pat = +m[3], pre = m[4]; if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && (pat < 1 || (pat === 1 && pre !== undefined)))))) process.exit(1);' "$NPM_VER"; then
+            echo "::error::npm >= 11.5.1 is required for OIDC Trusted Publishing (found $NPM_VER)."
+            exit 1
+          fi
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           DIST_TAG="latest"
@@ -163,7 +169,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # zizmor: ignore[use-trusted-publishing] GitHub Packages authenticates via GITHUB_TOKEN packages:write, not OIDC trusted publishing
       - name: Publish to GitHub Packages (Idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
