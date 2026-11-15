@@ -81,6 +81,27 @@ export function resolveRealPath(targetPath, symlinkDepth = 0) {
   return current;
 }
 
+export function isDirectCli(metaUrl, argv1 = process.argv[1], realpathFn = nativeRealpath) {
+  if (typeof argv1 !== 'string' || argv1.trim() === '') {
+    return false;
+  }
+  let metaPath;
+  try {
+    metaPath = resolve(fileURLToPath(metaUrl));
+  } catch {
+    return false;
+  }
+  const argvPath = resolve(argv1);
+  const resolveOrFallback = (p) => {
+    try {
+      return normalizePlatformPath(realpathFn(p));
+    } catch {
+      return p;
+    }
+  };
+  return normCase(resolveOrFallback(argvPath)) === normCase(resolveOrFallback(metaPath));
+}
+
 export function isSameOrSubpath(targetPath, basePath) {
   const rel = relative(normCase(resolveRealPath(basePath)), normCase(resolveRealPath(targetPath)));
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel));

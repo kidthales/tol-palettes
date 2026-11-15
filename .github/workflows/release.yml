@@ -24,10 +24,13 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      sha: ${{ steps.verify-tag.outputs.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -37,14 +40,20 @@ jobs:
           package-manager-cache: false
 
       - name: Verify release tag matches project metadata versions
+        id: verify-tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
         run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           TAG="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           if [ -z "$TAG" ]; then
             echo "::error::No release tag or ref name found."
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$ ]]; then
+            echo "::error::Release tag '$TAG' does not match required format '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$'."
             exit 1
           fi
           PKG_VER=$(node -p "require('./package.json').version")
@@ -55,9 +64,10 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_PY_VER=$(PKG_VER="$PKG_VER" node --input-type=module -e "import { semverToPep440 } from './tools/sync-version.mjs'; console.log(semverToPep440(process.env.PKG_VER));")
           PY_VER=$(node -p 'require("fs").readFileSync("pyproject.toml", "utf8").match(/^version\s*=\s*["'\''"]([^"'\''"]+)["'\''"]/m)[1]')
-          if [ "$PY_VER" != "$PKG_VER" ]; then
-            echo "::error::pyproject.toml version '$PY_VER' does not match package.json version '$PKG_VER'."
+          if [ "$PY_VER" != "$EXPECTED_PY_VER" ]; then
+            echo "::error::pyproject.toml version '$PY_VER' does not match expected PEP 440 version '$EXPECTED_PY_VER' (from '$PKG_VER')."
             exit 1
           fi
 
@@ -73,7 +83,7 @@ jobs:
             exit 1
           fi
 
-          echo "Release tag '$TAG' matches version $PKG_VER across package.json, pyproject.toml, CITATION.cff, and plugin.cfg."
+          echo "Release tag '$TAG' matches version $PKG_VER (PEP 440: $EXPECTED_PY_VER) across package.json, pyproject.toml, CITATION.cff, and plugin.cfg."
 
   verify:
     name: Verify Release via CI Pipeline
@@ -81,26 +91,32 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.tag-guard.outputs.sha }}
 
   publish-npm:
     name: Publish to npm Public Registry
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@kidthales/tol-palettes
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: '>=24.5.0 <25' # Node >=24.5.0 natively bundles npm >=11.5.1 for OIDC Trusted Publishing
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
 
@@ -108,22 +124,32 @@ jobs:
         run: npm ci
 
       - name: Publish to npm (Idempotent with Provenance)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          is_valid_npm() {
+            node -e 'const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(process.argv[1].trim()); if (!m) process.exit(1); const maj = +m[1], min = +m[2], pat = +m[3], pre = m[4]; if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && (pat < 1 || (pat === 1 && pre !== undefined)))))) process.exit(1);' "$1"
+          }
+          NPM_VER=$(npm --version)
+          if ! is_valid_npm "$NPM_VER"; then
+            echo "::error::npm >= 11.5.1 is required for OIDC Trusted Publishing (found $NPM_VER)."
+            exit 1
+          fi
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
+          DIST_TAG="latest"
+          if [[ "$PKG_VER" == *-* ]]; then
+            DIST_TAG="next"
+          fi
           echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on npm public registry..."
           if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
             echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on npm. Skipping publish step."
           else
-            npm publish --provenance --access public
-            echo "Successfully published ${PKG_NAME}@${PKG_VER} to npm."
+            npm publish --tag "$DIST_TAG" --provenance --access public
+            echo "Successfully published ${PKG_NAME}@${PKG_VER} (tag: ${DIST_TAG}) to npm."
           fi
 
   publish-gpr:
     name: Publish to GitHub Packages
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -133,6 +159,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -145,24 +172,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # zizmor: ignore[use-trusted-publishing] GitHub Packages authenticates via GITHUB_TOKEN packages:write, not OIDC trusted publishing
       - name: Publish to GitHub Packages (Idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
+          DIST_TAG="latest"
+          if [[ "$PKG_VER" == *-* ]]; then
+            DIST_TAG="next"
+          fi
           echo "Checking if ${PKG_NAME}@${PKG_VER} already exists on GitHub Packages..."
           if npm view "${PKG_NAME}@${PKG_VER}" version --registry=https://npm.pkg.github.com/ >/dev/null 2>&1; then
             echo "::notice ::Version ${PKG_VER} of ${PKG_NAME} is already published on GitHub Packages. Skipping publish step."
           else
-            npm publish --registry=https://npm.pkg.github.com/
-            echo "Successfully published ${PKG_NAME}@${PKG_VER} to GitHub Packages."
+            npm publish --tag "$DIST_TAG" --registry=https://npm.pkg.github.com/
+            echo "Successfully published ${PKG_NAME}@${PKG_VER} (tag: ${DIST_TAG}) to GitHub Packages."
           fi
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -175,6 +205,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Set up Python
@@ -186,16 +217,87 @@ jobs:
         run: python -m pip install --upgrade pip build
 
       - name: Build sdist and wheel
-        run: python -m build --outdir dist_pypi/
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          if ! [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]; then
+            echo "::error::Failed to resolve commit timestamp for SOURCE_DATE_EPOCH (got '$SOURCE_DATE_EPOCH')."
+            exit 1
+          fi
+          export SOURCE_DATE_EPOCH
+          python -m build --outdir dist_pypi/
+
+      - name: Check existing PyPI release
+        run: |
+          python - <<'EOF'
+          import tomllib, urllib.error, urllib.request
+          with open("pyproject.toml", "rb") as f:
+              proj = tomllib.load(f)["project"]
+          url = f"https://pypi.org/pypi/{proj['name']}/{proj['version']}/json"
+          try:
+              with urllib.request.urlopen(url, timeout=15) as resp:
+                  if resp.status == 200:
+                      print(f"::warning ::Version {proj['version']} of {proj['name']} already exists on PyPI; skip-existing will skip already-published files.")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  print(f"::warning ::Unable to query PyPI pre-publish state ({exc.code}); continuing.")
+          except Exception as exc:
+              print(f"::warning ::Unable to query PyPI pre-publish state ({exc}); continuing.")
+          EOF
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist_pypi/
+          skip-existing: true
+
+      - name: Verify PyPI published digests
+        run: |
+          python - <<'EOF'
+          import hashlib, json, pathlib, sys, time, tomllib, urllib.error, urllib.request
+          with open("pyproject.toml", "rb") as f:
+              proj = tomllib.load(f)["project"]
+          local_files = {
+              p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in sorted(pathlib.Path("dist_pypi").iterdir())
+              if p.is_file()
+          }
+          if not local_files:
+              print("::error::No built distributions found in dist_pypi/.")
+              sys.exit(1)
+          url = f"https://pypi.org/pypi/{proj['name']}/{proj['version']}/json"
+          remote_urls = {}
+          for attempt in range(5):
+              try:
+                  with urllib.request.urlopen(url, timeout=15) as resp:
+                      data = json.load(resp)
+                      remote_urls = {u["filename"]: u.get("digests", {}).get("sha256") for u in data.get("urls", [])}
+                      if all(name in remote_urls for name in local_files):
+                          break
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404 or attempt == 4:
+                      print(f"::error::Failed to fetch PyPI release metadata from {url}: HTTP {exc.code}")
+                      sys.exit(1)
+              except Exception as exc:
+                  if attempt == 4:
+                      print(f"::error::Failed to fetch PyPI release metadata from {url}: {exc}")
+                      sys.exit(1)
+              time.sleep(3)
+          mismatches = []
+          for name, local_sha in local_files.items():
+              remote_sha = remote_urls.get(name)
+              if not remote_sha:
+                  mismatches.append(f"missing on PyPI: {name}")
+              elif remote_sha != local_sha:
+                  mismatches.append(f"SHA-256 mismatch for {name}: PyPI={remote_sha}, dist_pypi={local_sha}")
+          if mismatches:
+              print("::error::PyPI digest verification failed: " + "; ".join(mismatches))
+              sys.exit(1)
+          print(f"Verified PyPI SHA-256 digests match dist_pypi/ for {len(local_files)} distribution file(s).")
+          EOF
 
   attach-assets:
     name: Attach Release Asset Bundles
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
@@ -207,6 +309,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -222,6 +325,27 @@ jobs:
         run: |
           npm run generate:game
           npm run package:assets
+          if ! test -z "$(git status --porcelain)"; then
+            echo "::error::Generated game assets or zip bundles produced unexpected git working tree drift."
+            git status --porcelain
+            exit 1
+          fi
+
+      - name: Attest Build Provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/assets/*.zip
+            dist/SHA256SUMS.txt
+            dist/manifest.json
+            dist/sri.json
+            dist/css/tol.css
+            dist/js/index.js
+            dist/json/schemes.json
+            dist/py/tol_palettes.py
+            LICENSE
+            NOTICE
+          create-storage-record: false
 
       - name: Upload release assets to GitHub Release
         env:
@@ -246,16 +370,6 @@ jobs:
             NOTICE \
             --clobber
 
-      - name: Attest Build Provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            dist/assets/*.zip
-            dist/SHA256SUMS.txt
-            dist/manifest.json
-            dist/sri.json
-          create-storage-record: false
-
   notify:
     name: Discord Release Notification
     needs: [tag-guard, verify, publish-npm, publish-gpr, publish-pypi, attach-assets]
@@ -276,10 +390,13 @@ jobs:
           PYPI_STATUS: ${{ needs.publish-pypi.result }}
           ASSETS_STATUS: ${{ needs.attach-assets.result || 'skipped' }}
           REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.tag-guard.outputs.sha || github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          TAG_NAME="${RELEASE_TAG:-${DISPATCH_TAG:-$REF_NAME}}"
           if [ "$JOB_STATUS" = "success" ]; then
             COLOR=2263091
             TITLE="🚀 Release Published — tol-palettes"
@@ -295,7 +412,7 @@ jobs:
             --arg title "$TITLE" \
             --arg url "$RUN_URL" \
             --arg repo "$REPO" \
-            --arg tag "$REF_NAME" \
+            --arg tag "$TAG_NAME" \
             --arg sha "$SHA" \
             --arg npm "$NPM_STATUS" \
             --arg gpr "$GPR_STATUS" \

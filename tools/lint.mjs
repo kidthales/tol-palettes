@@ -5,102 +5,313 @@
 // 4. Verifies zero tracked agent/scratch files in git
 // 5. Verifies package.json subpath exports resolve on disk
 // 6. Audits GitHub Actions workflows against AST drift and security invariants
-// 7. Audits dist/gallery/index.html for CSP compliance, anchors, and accessible controls
+// 7. Audits dist/gallery/index.html for CSP compliance, anchors, accessible controls, and hosted schema parity
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
+import { isDirectCli } from './path-jail.mjs';
+import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const errors = [];
+export const EXPECTED_SCHEMA_ID = 'https://tol-palettes.kidthales.com/schema/scheme.schema.json';
+const INVALID_EXPORT_TARGET_RE = /(?:^|\/)node_modules(?:\/|$)|%(?:2e|2f|5c)/i;
 
-// 1. JSON Schema + Invariant validation
-const results = validateAll();
-if (results.length !== 22) {
-  errors.push(`Expected 22 scheme files in data/schemes/, found ${results.length}.`);
+function isWithinRoot(resolvedRoot, candidate) {
+  const rel = relative(resolvedRoot, candidate);
+  return !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
 }
-for (const r of results) {
-  for (const p of r.problems) {
-    errors.push(`[schema] ${r.file}: ${p}`);
+
+function hasInvalidExportSegments(pattern) {
+  const afterPrefix = pattern.slice(2);
+  if (afterPrefix.split('/').some((seg) => seg === '')) {
+    return true;
   }
+  return [pattern, pattern.replace(/\*/g, '')].some(
+    (candidate) =>
+      candidate.includes('\\') ||
+      INVALID_EXPORT_TARGET_RE.test(candidate.slice(2)) ||
+      candidate.slice(2).split('/').some((seg) => seg === '.' || seg === '..'),
+  );
 }
 
-// 2. Node.js syntax check on all tools/*.mjs and tests/*.mjs
-for (const dirName of ['tools', 'tests']) {
-  const dirPath = join(root, dirName);
-  for (const file of readdirSync(dirPath).filter((f) => f.endsWith('.mjs'))) {
-    const fullPath = join(dirPath, file);
-    try {
-      execFileSync(process.execPath, ['--check', fullPath], { stdio: 'pipe' });
-    } catch (err) {
-      errors.push(`[syntax] ${dirName}/${file}: ${err.stderr?.toString() || err.message}`);
+function isValidSubpathKey(subpath, errors) {
+  if (subpath === '.') {
+    return true;
+  }
+  if (!subpath.startsWith('./')) {
+    errors.push(`[exports] Subpath key "${subpath}" must equal "." or start with "./".`);
+    return false;
+  }
+  if ((subpath.match(/\*/g) ?? []).length > 1) {
+    errors.push(`[exports] Subpath key "${subpath}" must not contain more than one "*" wildcard.`);
+    return false;
+  }
+  if (hasInvalidExportSegments(subpath)) {
+    errors.push(`[exports] Subpath key "${subpath}" contains invalid path segment.`);
+    return false;
+  }
+  return true;
+}
+
+function auditExportNode(subpath, node, resolvedRoot, realRoot, errors) {
+  if (node === null) {
+    return;
+  }
+  if (Array.isArray(node)) {
+    if (node.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty fallback array.`);
+      return;
+    }
+    for (const item of node) {
+      auditExportNode(subpath, item, resolvedRoot, realRoot, errors);
+    }
+    return;
+  }
+  if (typeof node === 'object') {
+    const entries = Object.entries(node);
+    if (entries.length === 0) {
+      errors.push(`[exports] Export "${subpath}" has an empty condition map.`);
+      return;
+    }
+    for (const [condition, value] of entries) {
+      if (condition.startsWith('.')) {
+        errors.push(`[exports] Export "${subpath}" condition key "${condition}" must not start with ".".`);
+        continue;
+      }
+      auditExportNode(subpath, value, resolvedRoot, realRoot, errors);
+    }
+    return;
+  }
+  if (typeof node !== 'string') {
+    errors.push(`[exports] Export "${subpath}" has invalid target "${String(node)}".`);
+    return;
+  }
+  if (!node.startsWith('./')) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must start with "./".`);
+    return;
+  }
+  const wildcardCount = (node.match(/\*/g) ?? []).length;
+  if (wildcardCount > 1) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must not contain more than one "*" wildcard.`);
+    return;
+  }
+  const hasWildcard = wildcardCount === 1;
+  const wildcardSamplePath = resolve(resolvedRoot, node.replace(/\*/g, '_'));
+  const wildcardEmptyPath = resolve(resolvedRoot, node.replace(/\*/g, ''));
+  let checkPath = node;
+  if (hasWildcard) {
+    const beforeWildcard = node.slice(0, node.indexOf('*'));
+    checkPath = beforeWildcard.endsWith('/') ? beforeWildcard.slice(0, -1) : posix.dirname(beforeWildcard);
+    if (!checkPath || checkPath === './') {
+      checkPath = '.';
     }
   }
+  const resolvedCheckPath = resolve(resolvedRoot, checkPath);
+  if (
+    !isWithinRoot(resolvedRoot, wildcardSamplePath) ||
+    !isWithinRoot(resolvedRoot, wildcardEmptyPath) ||
+    !isWithinRoot(resolvedRoot, resolvedCheckPath)
+  ) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root.`);
+    return;
+  }
+  if (hasInvalidExportSegments(node)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" contains invalid path segment.`);
+    return;
+  }
+  let targetStat;
+  let realCheckPath;
+  try {
+    targetStat = statSync(resolvedCheckPath);
+    realCheckPath = realpathSync(resolvedCheckPath);
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      errors.push(`[exports] Export "${subpath}" target "${node}" does not exist on disk.`);
+    } else {
+      errors.push(`[exports] Export "${subpath}" target "${node}" could not be inspected: ${err.message}`);
+    }
+    return;
+  }
+  if (!isWithinRoot(realRoot, realCheckPath)) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" resolves outside package root via symlink.`);
+    return;
+  }
+  if (hasWildcard) {
+    if (!targetStat.isDirectory()) {
+      errors.push(`[exports] Export "${subpath}" wildcard target "${node}" prefix must resolve to a directory.`);
+    }
+  } else if (!targetStat.isFile()) {
+    errors.push(`[exports] Export "${subpath}" target "${node}" must resolve to a file.`);
+  }
 }
 
-// 3. Attribution header check across dist/ outputs
-const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite', 'gallery', 'json'];
-for (const sub of distCheckDirs) {
-  const subPath = join(root, 'dist', sub);
-  if (!existsSync(subPath)) {
-    errors.push(`[dist] Missing dist/${sub} directory.`);
-    continue;
+export function auditPackageExports(targetRoot, pkg) {
+  const errors = [];
+  const resolvedRoot = resolve(targetRoot);
+  let realRoot = resolvedRoot;
+  try {
+    realRoot = realpathSync(resolvedRoot);
+  } catch {
+    // Fallback to resolvedRoot if targetRoot does not exist; per-target statSync will fail closed.
   }
-  const files = readdirSync(subPath, { withFileTypes: true })
-    .filter((d) => d.isFile())
-    .map((d) => d.name);
-  if (files.length === 0) {
-    errors.push(`[dist] dist/${sub} is empty.`);
+  const exportsField = pkg?.exports;
+  if (exportsField && typeof exportsField === 'object' && !Array.isArray(exportsField)) {
+    const keys = Object.keys(exportsField);
+    const hasSubpathKeys = keys.some((key) => key.startsWith('.'));
+    const hasConditionKeys = keys.some((key) => !key.startsWith('.'));
+    if (hasSubpathKeys && hasConditionKeys) {
+      errors.push('[exports] package.json exports must not mix "."-prefixed subpath keys with condition keys.');
+    }
+    if (!hasSubpathKeys && hasConditionKeys) {
+      auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
+    } else {
+      for (const [subpath, target] of Object.entries(exportsField)) {
+        if (subpath.startsWith('.') && !isValidSubpathKey(subpath, errors)) {
+          continue;
+        }
+        auditExportNode(subpath, target, resolvedRoot, realRoot, errors);
+      }
+    }
+  } else if (exportsField !== undefined && exportsField !== null) {
+    auditExportNode('.', exportsField, resolvedRoot, realRoot, errors);
   }
-  for (const f of files) {
-    if (sub === 'gallery' && f === 'CNAME') {
+  if (pkg?.exports?.['./schema/scheme.schema.json'] !== './schema/scheme.schema.json') {
+    errors.push('[exports] package.json exports must map "./schema/scheme.schema.json" to "./schema/scheme.schema.json".');
+  }
+  return errors;
+}
+
+export function auditHostedSchema(targetRoot) {
+  const errors = [];
+  const srcSchemaPath = join(targetRoot, 'schema', 'scheme.schema.json');
+  const gallerySchemaPath = join(targetRoot, 'dist', 'gallery', 'schema', 'scheme.schema.json');
+  let srcSchemaBytes = null;
+  try {
+    srcSchemaBytes = readFileSync(srcSchemaPath);
+    const srcSchema = JSON.parse(srcSchemaBytes.toString('utf8'));
+    if (srcSchema.$id !== EXPECTED_SCHEMA_ID) {
+      errors.push(`[schema] schema/scheme.schema.json $id must be "${EXPECTED_SCHEMA_ID}", found "${srcSchema.$id}"`);
+    }
+  } catch (err) {
+    errors.push(`[schema] Failed to parse schema/scheme.schema.json: ${err.message}`);
+  }
+  if (!existsSync(gallerySchemaPath)) {
+    errors.push('[gallery] Missing dist/gallery/schema/scheme.schema.json');
+  } else {
+    try {
+      const gallerySchemaBytes = readFileSync(gallerySchemaPath);
+      if (srcSchemaBytes && !srcSchemaBytes.equals(gallerySchemaBytes)) {
+        errors.push('[gallery] dist/gallery/schema/scheme.schema.json is not byte-identical to schema/scheme.schema.json');
+      }
+    } catch (err) {
+      errors.push(`[gallery] Failed to read dist/gallery/schema/scheme.schema.json: ${err.message}`);
+    }
+  }
+  return errors;
+}
+
+export function runLint(targetRoot = root) {
+  const errors = [];
+
+  // 1. JSON Schema + Invariant validation
+  try {
+    const results = validateAll(targetRoot);
+    if (results.length !== 22) {
+      errors.push(`Expected 22 scheme files in data/schemes/, found ${results.length}.`);
+    }
+    for (const r of results) {
+      for (const p of r.problems) {
+        errors.push(`[schema] ${r.file}: ${p}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`[schema] Validation failed: ${err.message}`);
+  }
+
+  // 2. Node.js syntax check on all tools/*.mjs and tests/*.mjs
+  for (const dirName of ['tools', 'tests']) {
+    const dirPath = join(targetRoot, dirName);
+    if (!existsSync(dirPath)) {
+      errors.push(`[syntax] Missing ${dirName}/ directory.`);
       continue;
     }
-    const content = readFileSync(join(subPath, f), 'utf8');
-    if (!content.includes('Paul Tol') || !content.includes('not affiliated with or endorsed by Paul Tol')) {
-      errors.push(`[attribution] dist/${sub}/${f} is missing the mandatory Paul Tol attribution header.`);
+    for (const file of readdirSync(dirPath).filter((f) => f.endsWith('.mjs'))) {
+      const fullPath = join(dirPath, file);
+      try {
+        execFileSync(process.execPath, ['--check', fullPath], { stdio: 'pipe' });
+      } catch (err) {
+        errors.push(`[syntax] ${dirName}/${file}: ${err.stderr?.toString() || err.message}`);
+      }
     }
   }
-}
 
-// 4. Agent / scratch file leak guard
-try {
-  const tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
-    .split(/\r?\n/)
-    .filter(Boolean);
-  const badPattern = /^(\.agents?\/|\.gemini\/|\.ai\/|\.cursor\/|\.claude\/|scratch\/|docs\/learnings\/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)/;
-  for (const file of tracked) {
-    if (badPattern.test(file)) {
-      errors.push(`[hygiene] Agent or scratch file tracked in git: ${file}`);
+  // 3. Attribution header check across dist/ outputs
+  const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite', 'gallery', 'json'];
+  for (const sub of distCheckDirs) {
+    const subPath = join(targetRoot, 'dist', sub);
+    if (!existsSync(subPath)) {
+      errors.push(`[dist] Missing dist/${sub} directory.`);
+      continue;
+    }
+    const files = readdirSync(subPath, { withFileTypes: true })
+      .filter((d) => d.isFile())
+      .map((d) => d.name);
+    if (files.length === 0) {
+      errors.push(`[dist] dist/${sub} is empty.`);
+    }
+    for (const f of files) {
+      if (sub === 'gallery' && f === 'CNAME') {
+        continue;
+      }
+      const content = readFileSync(join(subPath, f), 'utf8');
+      if (!content.includes('Paul Tol') || !content.includes('not affiliated with or endorsed by Paul Tol')) {
+        errors.push(`[attribution] dist/${sub}/${f} is missing the mandatory Paul Tol attribution header.`);
+      }
     }
   }
-} catch {
-  // Ignore if git is unavailable
-}
 
-// 5. Package exports resolution check
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-for (const [subpath, target] of Object.entries(pkg.exports ?? {})) {
-  const targets = typeof target === 'string' ? [target] : Object.values(target);
-  for (const t of targets) {
-    const checkPath = t.includes('*') ? t.replace(/\/?\*.*$/, '') : t;
-    if (!existsSync(join(root, checkPath))) {
-      errors.push(`[exports] Export "${subpath}" target "${t}" does not exist on disk.`);
+  // 4. Agent / scratch file leak guard
+  try {
+    const tracked = execFileSync('git', ['ls-files'], { cwd: targetRoot, encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter(Boolean);
+    const badPattern = /^(\.agents?\/|\.gemini\/|\.ai\/|\.cursor\/|\.claude\/|scratch\/|docs\/learnings\/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)/;
+    for (const file of tracked) {
+      if (badPattern.test(file)) {
+        errors.push(`[hygiene] Agent or scratch file tracked in git: ${file}`);
+      }
+    }
+  } catch {
+    // Ignore if git is unavailable
+  }
+
+  // 5. Package exports resolution check
+  let pkg = {};
+  const pkgPath = join(targetRoot, 'package.json');
+  if (!existsSync(pkgPath)) {
+    errors.push('[exports] Missing package.json');
+  } else {
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      errors.push(...auditPackageExports(targetRoot, pkg));
+    } catch (err) {
+      errors.push(`[exports] Failed to parse package.json: ${err.message}`);
     }
   }
-}
 
-// 6. GitHub Actions workflow AST & security audit
-const workflowViolations = auditWorkflows(root);
-for (const v of workflowViolations) {
-  errors.push(`[workflow] ${v}`);
-}
+  // 6. GitHub Actions workflow AST & security audit
+  const workflowViolations = auditWorkflows(targetRoot);
+  for (const v of workflowViolations) {
+    errors.push(`[workflow] ${v}`);
+  }
 
-// 7. Gallery HTML accessibility, anchors, and CSP audit
-const galleryHtmlPath = join(root, 'dist', 'gallery', 'index.html');
+  // 7. Gallery HTML accessibility, anchors, and CSP audit
+  const galleryHtmlPath = join(targetRoot, 'dist', 'gallery', 'index.html');
 if (existsSync(galleryHtmlPath)) {
   const html = readFileSync(galleryHtmlPath, 'utf8');
 
@@ -158,10 +369,274 @@ if (existsSync(galleryHtmlPath)) {
   }
 }
 
-if (errors.length > 0) {
-  console.error('✖ Lint failed:');
-  for (const e of errors) console.error(`  - ${e}`);
-  process.exit(1);
+errors.push(...auditHostedSchema(targetRoot));
+
+// 8. 8-target version parity verification
+let expectedPep440;
+if (typeof pkg.version !== 'string') {
+  errors.push('[version] package.json missing version field');
+} else {
+  try {
+    expectedPep440 = semverToPep440(pkg.version);
+  } catch (err) {
+    errors.push(`[version] package.json version "${pkg.version}" is not valid SemVer: ${err.message}`);
+  }
 }
 
-console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited, gallery verified.');
+if (expectedPep440) {
+  // Target 2: package-lock.json
+  const lockPath = join(targetRoot, 'package-lock.json');
+  if (!existsSync(lockPath)) {
+    errors.push('[version] Missing package-lock.json');
+  } else {
+    try {
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+      if (lock.version !== pkg.version) {
+        errors.push(`[version] package-lock.json version "${lock.version}" does not match package.json "${pkg.version}"`);
+      }
+      if (lock.packages && lock.packages[''] && lock.packages[''].version !== pkg.version) {
+        errors.push(
+          `[version] package-lock.json packages[""].version "${lock.packages[''].version}" does not match package.json "${pkg.version}"`,
+        );
+      }
+    } catch (err) {
+      errors.push(`[version] Failed to parse package-lock.json: ${err.message}`);
+    }
+  }
+
+  // Target 3: pyproject.toml
+  const pyTomlPath = join(targetRoot, 'pyproject.toml');
+  if (!existsSync(pyTomlPath)) {
+    errors.push('[version] Missing pyproject.toml');
+  } else {
+    const pyToml = readFileSync(pyTomlPath, 'utf8');
+    const pyMatch = pyToml.match(/^version\s*=\s*["']([^"']+)["']/m);
+    if (!pyMatch) {
+      errors.push('[version] pyproject.toml missing version field');
+    } else if (pyMatch[1] !== expectedPep440) {
+      errors.push(`[version] pyproject.toml version "${pyMatch[1]}" does not match expected PEP 440 "${expectedPep440}"`);
+    }
+  }
+
+  // Target 4: CITATION.cff
+  const cffPath = join(targetRoot, 'CITATION.cff');
+  if (!existsSync(cffPath)) {
+    errors.push('[version] Missing CITATION.cff');
+  } else {
+    const cff = readFileSync(cffPath, 'utf8');
+    const cffMatch = cff.match(/^version:\s*([^\s\r\n]+)/m);
+    if (!cffMatch) {
+      errors.push('[version] CITATION.cff missing version field');
+    } else if (cffMatch[1] !== pkg.version) {
+      errors.push(`[version] CITATION.cff version "${cffMatch[1]}" does not match package.json "${pkg.version}"`);
+    }
+  }
+
+  // Target 5: dist/godot/addons/tol_palettes/plugin.cfg
+  const pluginCfgPath = join(targetRoot, 'dist', 'godot', 'addons', 'tol_palettes', 'plugin.cfg');
+  if (!existsSync(pluginCfgPath)) {
+    errors.push('[version] Missing dist/godot/addons/tol_palettes/plugin.cfg');
+  } else {
+    const pluginCfg = readFileSync(pluginCfgPath, 'utf8');
+    const pluginMatch = pluginCfg.match(/^version\s*=\s*"([^"]+)"/m);
+    if (!pluginMatch) {
+      errors.push('[version] plugin.cfg missing version field');
+    } else if (pluginMatch[1] !== pkg.version) {
+      errors.push(`[version] plugin.cfg version "${pluginMatch[1]}" does not match package.json "${pkg.version}"`);
+    }
+  }
+
+  // Target 6: dist/py/tol_palettes.py
+  const pyDistPath = join(targetRoot, 'dist', 'py', 'tol_palettes.py');
+  if (!existsSync(pyDistPath)) {
+    errors.push('[version] Missing dist/py/tol_palettes.py');
+  } else {
+    const pyDist = readFileSync(pyDistPath, 'utf8');
+    const pyDistMatch = pyDist.match(/^__version__\s*=\s*['"]([^'"]+)['"]/m);
+    if (!pyDistMatch) {
+      errors.push('[version] dist/py/tol_palettes.py missing __version__ declaration');
+    } else if (pyDistMatch[1] !== expectedPep440) {
+      errors.push(
+        `[version] dist/py/tol_palettes.py __version__ "${pyDistMatch[1]}" does not match expected PEP 440 "${expectedPep440}"`,
+      );
+    }
+  }
+
+  // Target 7: dist/sri.json
+  const sriPath = join(targetRoot, 'dist', 'sri.json');
+  if (!existsSync(sriPath)) {
+    errors.push('[version] Missing dist/sri.json');
+  } else {
+    try {
+      const sriObj = JSON.parse(readFileSync(sriPath, 'utf8'));
+      if (sriObj.version !== pkg.version) {
+        errors.push(`[version] dist/sri.json version "${sriObj.version}" does not match package.json "${pkg.version}"`);
+      }
+    } catch (err) {
+      errors.push(`[version] Failed to parse dist/sri.json: ${err.message}`);
+    }
+  }
+
+  // Target 8: dist/manifest.json
+  const manifestPath = join(targetRoot, 'dist', 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    errors.push('[version] Missing dist/manifest.json');
+  } else {
+    try {
+      const manifestObj = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifestObj.version !== pkg.version) {
+        errors.push(`[version] dist/manifest.json version "${manifestObj.version}" does not match package.json "${pkg.version}"`);
+      }
+    } catch (err) {
+      errors.push(`[version] Failed to parse dist/manifest.json: ${err.message}`);
+    }
+  }
+}
+
+// 9. SHA256SUMS.txt standalone upload coverage
+const releaseYmlPath = join(targetRoot, '.github', 'workflows', 'release.yml');
+const sumsPath = join(targetRoot, 'dist', 'SHA256SUMS.txt');
+
+if (!existsSync(sumsPath)) {
+  errors.push('[checksums] Missing dist/SHA256SUMS.txt');
+} else {
+  const sumsText = readFileSync(sumsPath, 'utf8');
+  const sumLines = sumsText.trim().split(/\r?\n/).filter(Boolean);
+  const foundInSums = new Map();
+  for (const line of sumLines) {
+    const parts = line.split(/\s+/);
+    if (parts.length < 2) {
+      errors.push(`[checksums] Invalid line in SHA256SUMS.txt: "${line}"`);
+      continue;
+    }
+    const [sha, ...nameParts] = parts;
+    const name = nameParts.join(' ');
+    foundInSums.set(name, sha);
+  }
+
+  const expectedStandaloneAssets = new Map();
+  if (existsSync(releaseYmlPath)) {
+    const releaseYml = readFileSync(releaseYmlPath, 'utf8');
+    const uploadMatch = releaseYml.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+    if (uploadMatch) {
+      const lines = uploadMatch[1]
+        .split(/\r?\n/)
+        .map((l) => l.trim().replace(/\\$/, '').trim())
+        .filter(Boolean);
+      for (const p of lines) {
+        const base = basename(p);
+        if (base === 'SHA256SUMS.txt') continue;
+        expectedStandaloneAssets.set(base, p);
+      }
+    }
+  }
+
+  if (expectedStandaloneAssets.size === 0) {
+    errors.push(
+      '[checksums] Failed to parse standalone upload assets from .github/workflows/release.yml (expected release upload block with --clobber)',
+    );
+  }
+
+  for (const [name, relPath] of expectedStandaloneAssets) {
+    if (!foundInSums.has(name)) {
+      errors.push(`[checksums] Uploaded release asset "${name}" (${relPath}) missing from dist/SHA256SUMS.txt`);
+    }
+  }
+
+  for (const [name, declaredSha] of foundInSums) {
+    const relPath = expectedStandaloneAssets.get(name);
+    if (!relPath) {
+      errors.push(`[checksums] dist/SHA256SUMS.txt contains unexpected asset "${name}" not in release upload list`);
+      continue;
+    }
+    const fullPath = join(targetRoot, relPath);
+    if (!existsSync(fullPath)) {
+      errors.push(`[checksums] Asset "${name}" (${relPath}) in SHA256SUMS.txt does not exist on disk`);
+    } else {
+      const actualSha = createHash('sha256').update(readFileSync(fullPath)).digest('hex');
+      if (actualSha !== declaredSha) {
+        errors.push(`[checksums] SHA-256 digest mismatch for "${name}": manifest has ${declaredSha}, computed ${actualSha}`);
+      }
+    }
+  }
+}
+
+// 10. Documentation SRI digests verification
+const docSriPath = join(targetRoot, 'dist', 'sri.json');
+let tolCssIntegrity = null;
+if (existsSync(docSriPath)) {
+  try {
+    const sriObj = JSON.parse(readFileSync(docSriPath, 'utf8'));
+    tolCssIntegrity = sriObj.files?.['dist/css/tol.css']?.integrity;
+    if (!tolCssIntegrity) {
+      errors.push('[doc-sri] dist/sri.json missing files["dist/css/tol.css"].integrity');
+    }
+  } catch {
+    // Already reported in version parity check
+  }
+}
+
+const tolCssFile = join(targetRoot, 'dist', 'css', 'tol.css');
+if (existsSync(tolCssFile) && tolCssIntegrity) {
+  const actualHash = 'sha384-' + createHash('sha384').update(readFileSync(tolCssFile)).digest('base64');
+  if (actualHash !== tolCssIntegrity) {
+    errors.push(`[doc-sri] dist/sri.json integrity "${tolCssIntegrity}" does not match actual hash of dist/css/tol.css ("${actualHash}")`);
+  }
+}
+
+for (const docRel of DOC_FILES) {
+  const docPath = join(targetRoot, docRel);
+  if (!existsSync(docPath)) {
+    errors.push(`[doc-sri] Missing documentation file: ${docRel}`);
+    continue;
+  }
+  const content = readFileSync(docPath, 'utf8');
+  const match = content.match(DOC_LINK_REGEX);
+  if (!match) {
+    errors.push(`[doc-sri] ${docRel} missing pinned @<version> tol.css link with integrity attribute`);
+    continue;
+  }
+  const [, docVersion, docIntegrity] = match;
+  if (docVersion !== pkg.version) {
+    errors.push(`[doc-sri] ${docRel} pinned version "${docVersion}" does not match package.json "${pkg.version}"`);
+  }
+  if (tolCssIntegrity && docIntegrity !== tolCssIntegrity) {
+    errors.push(`[doc-sri] ${docRel} SRI integrity "${docIntegrity}" does not match dist/sri.json ("${tolCssIntegrity}")`);
+  }
+}
+
+  return errors;
+}
+
+if (isDirectCli(import.meta.url)) {
+  let targetRoot = root;
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--root') {
+      const val = argv[++i];
+      if (!val || val.startsWith('-')) {
+        console.error('✖ Lint failed: --root requires a directory path');
+        process.exit(1);
+      }
+      targetRoot = resolve(val);
+    } else if (arg.startsWith('--root=')) {
+      const val = arg.slice('--root='.length);
+      if (!val) {
+        console.error('✖ Lint failed: --root requires a directory path');
+        process.exit(1);
+      }
+      targetRoot = resolve(val);
+    } else {
+      console.error(`✖ Lint failed: Unknown option "${arg}"`);
+      process.exit(1);
+    }
+  }
+  const errors = runLint(targetRoot);
+  if (errors.length > 0) {
+    console.error('✖ Lint failed:');
+    for (const e of errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  console.log('✔ Lint passed: 22 schemes valid, 0 JS syntax errors, 100% attribution headers, all exports verified, workflows audited, gallery verified, 8-target version parity verified, SHA256SUMS coverage verified, doc SRI digests verified.');
+}

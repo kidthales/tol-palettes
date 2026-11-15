@@ -38,7 +38,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from collections import namedtuple
 
+__version__ = '1.0.0a1'
+
 __all__ = [
+    '__version__',
     'SCHEMES',
     'OFFICIAL_CSET_NAMES',
     'CSET_NAMES',

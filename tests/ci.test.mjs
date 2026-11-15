@@ -5,12 +5,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
 import {
   resolveOutDir,
   resolveRealPath,
   stripWin32DeviceNamespacePrefix,
+  isDirectCli,
   isSameOrSubpath,
   assertValidMtimeOption,
   assertSafeWriteTarget,
@@ -53,7 +55,30 @@ test('-CI with -SkipGenerate exits non-zero and enforces fail-closed contract', 
   assert.ok(combined.includes('-SkipGenerate'), `Expected "-SkipGenerate" in output, got: ${combined}`);
 });
 
-test('valid repository workflows pass Gate 0', () => {
+test('-CI with -Gate1Only exits non-zero and enforces fail-closed contract', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-CI', '-Gate1Only'], {
+    encoding: 'utf8',
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(combined.includes('fail-closed'), `Expected "fail-closed" in output, got: ${combined}`);
+  assert.ok(combined.includes('-Gate1Only'), `Expected "-Gate1Only" in output, got: ${combined}`);
+});
+
+test('-Gate0Only combined with -Gate1Only exits non-zero and rejects mutual exclusion', () => {
+  const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only', '-Gate1Only'], {
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  assert.notEqual(res.status, 0, 'Expected non-zero exit status when combining -Gate0Only and -Gate1Only');
+  const combined = (res.stdout || '') + (res.stderr || '');
+  assert.ok(
+    combined.includes('-Gate0Only and -Gate1Only cannot be combined'),
+    `Expected mutual-exclusion error in output, got: ${combined}`,
+  );
+});
+
+test('valid repository workflows pass Gate 0 and Gate 1', () => {
   const res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate0Only'], {
     cwd: root,
     encoding: 'utf8',
@@ -62,6 +87,15 @@ test('valid repository workflows pass Gate 0', () => {
   const combined = (res.stdout || '') + (res.stderr || '');
   assert.equal(res.status, 0, `Expected Gate 0 to pass on repo workflows. Output: ${combined}`);
   assert.ok(combined.includes('All workflow run steps conform'), 'Expected success confirmation');
+
+  const gate1Res = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_ACTIONS: '' },
+  });
+  const gate1Out = (gate1Res.stdout || '') + (gate1Res.stderr || '');
+  assert.equal(gate1Res.status, 0, `Expected Gate 1 to pass on repo workflows. Output: ${gate1Out}`);
+  assert.ok(gate1Out.includes('[gate1_action_pins_and_leaks: PASS]'), 'Expected Gate 1 PASS summary');
 });
 
 test('fixture workflow with un-allowlisted inline step fails Gate 0', () => {
@@ -135,7 +169,8 @@ test('all third-party actions across all workflow files are pinned to 40-charact
   const files = readdirSync(workflowsDir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'));
   assert.ok(files.length > 0, 'Must have workflow files');
 
-  const shaPattern = /@[0-9a-fA-F]{40}/;
+  const shaPattern = /@[0-9a-fA-F]{40}$/;
+  const dockerDigestPattern = /@sha256:[0-9a-fA-F]{64}$/;
 
   for (const file of files) {
     const content = readFileSync(join(workflowsDir, file), 'utf8');
@@ -145,12 +180,27 @@ test('all third-party actions across all workflow files are pinned to 40-charact
       const match = line.match(/^\s*(?:-\s+)?uses:\s*['"]?([^'"\s#]+)['"]?/);
       if (match) {
         const actionRef = match[1];
-        if (
-          actionRef.startsWith('./') ||
-          actionRef.startsWith('../') ||
-          actionRef.startsWith('$/') ||
-          actionRef.startsWith('docker://')
-        ) {
+        assert.ok(
+          !actionRef.startsWith('$'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not start with "$" (use "./" for same-repository references)`,
+        );
+        assert.ok(
+          !actionRef.startsWith('../'),
+          `Workflow/action reference in ${file} line ${i + 1} ("${actionRef}") must not use "../" relative path (must start with "./")`,
+        );
+        if (actionRef.startsWith('./')) {
+          assert.ok(
+            !actionRef.includes('..') && !actionRef.includes('\\') && !actionRef.includes('@'),
+            `Same-repository reference in ${file} line ${i + 1} ("${actionRef}") must be canonical and must not specify an @ref`,
+          );
+          continue;
+        }
+        if (actionRef.startsWith('docker://')) {
+          assert.match(
+            actionRef,
+            dockerDigestPattern,
+            `Docker action reference in ${file} line ${i + 1} ("${actionRef}") must be pinned to a @sha256 digest`,
+          );
           continue;
         }
         assert.match(
@@ -479,15 +529,44 @@ jobs:
   );
 });
 
-test('auditWorkflows and ci-local.ps1 reject $/ workflow targets with @ref and $/ in steps', () => {
+test('auditWorkflows and ci-local.ps1 Gate 1 reject any uses: starting with $, ../, and ./ references with @ref', () => {
   withTempFixture(
     {
-      'dollar_ref.yml': `name: DollarRef
+      'dollar_job.yml': `name: DollarJob
 permissions:
   contents: read
 jobs:
   call:
-    uses: $/.github/workflows/ci.yml@main
+    uses: $/.github/workflows/ci.yml
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
+
+      // Verify ci-local.ps1 Gate 1 directly rejects it without halting at Gate 0
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate0_workflow_contract: NOT-APPLICABLE]'));
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_ref.yml': `name: LocalRef
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: ./.github/workflows/ci.yml@main
 `,
     },
     (dir) => {
@@ -495,15 +574,77 @@ jobs:
       assert.equal(res.ok, false);
       assert.ok(res.violations.some((v) => v.includes("same-repository workflow references must not specify an @ref")));
 
-      // Also verify ci-local.ps1 Gate 1 rejects it
-      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-WorkflowsPath', dir], {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, GITHUB_ACTIONS: '' },
       });
       assert.notEqual(psRes.status, 0);
       const combined = (psRes.stdout || '') + (psRes.stderr || '');
-      assert.ok(combined.includes("same-repository workflow references must not specify an @ref"));
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'local_step_ref.yml': `name: LocalStepRef
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local step with ref
+        uses: ./.github/actions/my-action@main
+`,
+    },
+    (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false);
+      assert.ok(res.violations.some((v) => v.includes("same-repository local action references must not specify an @ref")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must not specify an @ref"));
+    },
+  );
+
+  withTempFixture(
+    {
+      'relative_parent.yml': `name: RelativeParent
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Local parent relative
+        uses: ../local-action
+`,
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("must start with './'"));
     },
   );
 
@@ -526,7 +667,109 @@ jobs:
     (dir) => {
       const res = auditWorkflows(dir);
       assert.equal(res.ok, false);
-      assert.ok(res.violations.some((v) => v.includes("only valid for reusable workflow calls at job level")));
+      assert.ok(res.violations.some((v) => v.includes("'$' prefix is invalid")));
+
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  // Single-line workflow file must be evaluated as a full line, not scalar [char] indexing
+  withTempFixture(
+    {
+      'single_line.yml': 'uses: $/.github/workflows/ci.yml',
+    },
+    (dir) => {
+      const psRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', dir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(psRes.status, 0);
+      const combined = (psRes.stdout || '') + (psRes.stderr || '');
+      assert.ok(combined.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(combined.includes("'$' prefix is invalid"));
+    },
+  );
+
+  // Missing or empty workflows directory must fail closed under -Gate1Only
+  withTempFixture({}, (emptyDir) => {
+    const emptyRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', emptyDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(emptyRes.status, 0, 'Expected empty workflows directory to fail closed under -Gate1Only');
+    const emptyOut = (emptyRes.stdout || '') + (emptyRes.stderr || '');
+    assert.ok(emptyOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(emptyOut.includes('No workflow files'));
+
+    const missingDir = join(emptyDir, 'nonexistent');
+    const missingRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', missingDir], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+    });
+    assert.notEqual(missingRes.status, 0, 'Expected missing workflows directory to fail closed under -Gate1Only');
+    const missingOut = (missingRes.stdout || '') + (missingRes.stderr || '');
+    assert.ok(missingOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+    assert.ok(missingOut.includes('Workflows directory not found'));
+  });
+
+  // Multiple invalid uses: targets across files must all be reported before throwing
+  withTempFixture(
+    {
+      'multi_a.yml': `name: MultiA
+permissions:
+  contents: read
+jobs:
+  call:
+    uses: $/.github/workflows/ci.yml
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: ../local-action
+      - uses: ./.github/actions/my-action@main
+`,
+      'multi_b.yml': `name: MultiB
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: docker://alpine:latest
+      - uses: actions/checkout@v4
+`,
+    },
+    (multiDir) => {
+      const multiRes = spawnSync('pwsh', ['-NoProfile', '-File', scriptPath, '-Gate1Only', '-WorkflowsPath', multiDir], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_ACTIONS: '' },
+      });
+      assert.notEqual(multiRes.status, 0, 'Expected multi-violation fixture to fail closed under -Gate1Only');
+      const multiOut = (multiRes.stdout || '') + (multiRes.stderr || '');
+      assert.ok(multiOut.includes('[gate1_action_pins_and_leaks: FAIL]'));
+      assert.ok(multiOut.includes("'$' prefix is invalid"));
+      assert.ok(multiOut.includes("must start with './'"));
+      assert.ok(multiOut.includes('must not specify an @ref'));
+      assert.ok(multiOut.includes('must pin to @sha256 digest'));
+      assert.ok(multiOut.includes('must pin to 40-char commit SHA'));
+      assert.ok(multiOut.includes('Gate 1 Failed: GitHub Actions commit SHA pin verification failed.'));
     },
   );
 });
@@ -833,7 +1076,7 @@ jobs:
       - name: Verify release tag matches project metadata versions
         run: echo no exit
   verify:
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
   attach-assets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -882,8 +1125,29 @@ jobs:
         run: exit 1
   verify:
     needs: [tag-guard]
-    uses: $/.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: \${{ needs.tag-guard.outputs.sha }}
+  publish-npm:
+    needs: [tag-guard, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@kidthales/tol-palettes
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '>=24.5.0 <25'
+          package-manager-cache: false
+      - name: Publish to npm (Idempotent with Provenance)
+        run: npm publish --tag latest --provenance --access public
   attach-assets:
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -996,4 +1260,621 @@ test('path-jail: isSameOrSubpath correctly detects subpath relations', () => {
   assert.equal(isSameOrSubpath(join(root, 'dist', 'css'), root), true);
   assert.equal(isSameOrSubpath(root, join(root, 'dist')), false);
   assert.equal(isSameOrSubpath(tmpdir(), root), false);
+});
+
+test('path-jail: isDirectCli handles matching, invalid, and realpath-error fallback paths', () => {
+  const lintFile = join(root, 'tools', 'lint.mjs');
+  const lintUrl = pathToFileURL(lintFile).href;
+
+  assert.equal(isDirectCli(lintUrl, ''), false);
+  assert.equal(isDirectCli(lintUrl, null), false);
+  assert.equal(isDirectCli('not-a-file-url', lintFile), false);
+  assert.equal(isDirectCli(lintUrl, lintFile), true);
+  assert.equal(isDirectCli(lintUrl, join(root, 'tools', 'validate.mjs')), false);
+
+  const eaccesRealpath = () => {
+    const err = new Error('EACCES: permission denied');
+    err.code = 'EACCES';
+    throw err;
+  };
+  const missingFile = join(root, 'tools', 'nonexistent-cli-entrypoint.mjs');
+  const missingUrl = pathToFileURL(missingFile).href;
+
+  // Realpath failures (EACCES or ENOENT) fall back to comparing unresolved normalized paths
+  assert.equal(isDirectCli(lintUrl, lintFile, eaccesRealpath), true);
+  assert.equal(isDirectCli(missingUrl, missingFile), true);
+  assert.equal(isDirectCli(lintUrl, join(root, 'tools', 'validate.mjs'), eaccesRealpath), false);
+
+  if (process.platform === 'win32') {
+    const swappedDrive = /^[A-Z]:/.test(missingFile)
+      ? missingFile[0].toLowerCase() + missingFile.slice(1)
+      : missingFile[0].toUpperCase() + missingFile.slice(1);
+    assert.equal(isDirectCli(missingUrl, swappedDrive), true);
+    assert.equal(isDirectCli(lintUrl, swappedDrive.replace('nonexistent-cli-entrypoint.mjs', 'lint.mjs'), eaccesRealpath), true);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Regression tests: CI Python matrix, requirements-ci, & release.yml contracts
+// ---------------------------------------------------------------------------
+
+test('ci.yml spans Python 3.11-3.14 across 4 matrix legs, forwards optional workflow_call ref, and requirements-ci pins matplotlib==3.11.2', () => {
+  const ciDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const include = ciDoc?.jobs?.verify?.strategy?.matrix?.include;
+  assert.ok(Array.isArray(include), 'Expected verify.strategy.matrix.include array in ci.yml');
+  assert.equal(include.length, 4, 'Expected exactly 4 matrix legs in ci.yml');
+
+  const pythonVersions = include.map((leg) => String(leg.python)).sort();
+  assert.deepEqual(pythonVersions, ['3.11', '3.12', '3.13', '3.14']);
+
+  const refInput = ciDoc?.on?.workflow_call?.inputs?.ref;
+  assert.ok(refInput, 'Expected optional inputs.ref on workflow_call in ci.yml');
+  assert.equal(refInput.type, 'string');
+  assert.equal(refInput.required, false);
+
+  for (const jobId of ['security', 'verify']) {
+    const steps = ciDoc?.jobs?.[jobId]?.steps || [];
+    const checkoutSteps = steps.filter((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'));
+    assert.equal(checkoutSteps.length, 1, `Expected 1 actions/checkout step in ci.yml ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.ref, '${{ inputs.ref }}', `Expected ref: \${{ inputs.ref }} in ci.yml ${jobId}`);
+    assert.equal(checkoutSteps[0].with?.['persist-credentials'], false);
+  }
+
+  const ciLocalContent = readFileSync(scriptPath, 'utf8');
+  assert.ok(
+    ciLocalContent.includes("Install Python 3.11+ and ensure 'python' is on PATH."),
+    'Expected ci-local.ps1 -CI missing-tool hint to match Python 3.11+ floor',
+  );
+  assert.ok(
+    !ciLocalContent.includes('Install Python 3.12+'),
+    'Stale Python 3.12+ floor hint must not remain in ci-local.ps1',
+  );
+
+  const reqs = readFileSync(join(root, 'requirements-ci.txt'), 'utf8');
+  assert.match(reqs, /^matplotlib==3\.11\.2\s*$/m, 'Expected matplotlib==3.11.2 pin in requirements-ci.txt');
+});
+
+test('release.yml locks tag-guard checkout to target tag ref, pins verify and all downstream jobs to verified SHA, and resolves notify tag + SHA', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const expectedTagRef =
+    "${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
+  const expectedVerifiedShaRef = '${{ needs.tag-guard.outputs.sha }}';
+
+  const tagGuardCheckout = (releaseDoc?.jobs?.['tag-guard']?.steps || []).filter(
+    (s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'),
+  );
+  assert.equal(tagGuardCheckout.length, 1, 'Expected 1 actions/checkout step in tag-guard');
+  assert.equal(tagGuardCheckout[0].with?.ref, expectedTagRef, 'Expected tag-locked checkout ref in tag-guard');
+  assert.equal(tagGuardCheckout[0].with?.['persist-credentials'], false, 'Expected persist-credentials: false in tag-guard');
+
+  const downstreamJobsWithCheckout = ['publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
+  let checkoutCount = tagGuardCheckout.length;
+  for (const jobId of downstreamJobsWithCheckout) {
+    const job = releaseDoc?.jobs?.[jobId];
+    const needs = Array.isArray(job?.needs) ? job.needs : [job?.needs];
+    assert.ok(needs.includes('tag-guard'), `Expected ${jobId} to declare tag-guard in needs`);
+    assert.ok(needs.includes('verify'), `Expected ${jobId} to declare verify in needs`);
+
+    const steps = job?.steps || [];
+    const checkoutSteps = steps.filter((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'));
+    assert.equal(checkoutSteps.length, 1, `Expected 1 actions/checkout step in ${jobId}`);
+    assert.equal(
+      checkoutSteps[0].with?.ref,
+      expectedVerifiedShaRef,
+      `Expected verified-SHA checkout ref in ${jobId} (no tag re-resolution)`,
+    );
+    assert.equal(checkoutSteps[0].with?.['persist-credentials'], false, `Expected persist-credentials: false in ${jobId}`);
+    checkoutCount += checkoutSteps.length;
+  }
+  assert.equal(checkoutCount, 5);
+
+  assert.equal(releaseDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
+  const verifyRef = releaseDoc?.jobs?.verify?.with?.ref;
+  assert.equal(verifyRef, expectedVerifiedShaRef, 'Expected release.yml verify job to forward verified SHA ref to ci.yml');
+  assert.equal(
+    verifyRef.includes('refs/tags/') || verifyRef.includes('tag_name') || verifyRef.includes('inputs.tag'),
+    false,
+    'verify.with.ref must not re-resolve tags',
+  );
+
+  const pagesDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'pages.yml'), 'utf8'));
+  assert.equal(pagesDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
+
+  const tagGuardJob = releaseDoc?.jobs?.['tag-guard'];
+  assert.equal(tagGuardJob?.outputs?.sha, '${{ steps.verify-tag.outputs.sha }}');
+  const tgVerifyStep = (tagGuardJob?.steps || []).find((s) => s.name === 'Verify release tag matches project metadata versions');
+  assert.equal(tgVerifyStep?.id, 'verify-tag');
+  assert.match(tgVerifyStep?.run || '', /echo "sha=\$\(git rev-parse HEAD\)" >> "\$GITHUB_OUTPUT"/);
+
+  const notifySteps = releaseDoc?.jobs?.notify?.steps || [];
+  assert.equal(notifySteps.length, 1);
+  const notifyStep = notifySteps[0];
+  assert.equal(notifyStep.env?.RELEASE_TAG, '${{ github.event.release.tag_name }}');
+  assert.equal(notifyStep.env?.DISPATCH_TAG, '${{ inputs.tag }}');
+  assert.equal(notifyStep.env?.REF_NAME, '${{ github.ref_name }}');
+  assert.equal(notifyStep.env?.SHA, '${{ needs.tag-guard.outputs.sha || github.sha }}');
+  assert.match(notifyStep.run, /TAG_NAME="\$\{RELEASE_TAG:-\$\{DISPATCH_TAG:-\$REF_NAME\}\}"/);
+});
+
+test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects invalid formats, and executes PEP 440 parity check', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const tgSteps = releaseDoc?.jobs?.['tag-guard']?.steps || [];
+  const verifyStep = tgSteps.find((s) => s.name === 'Verify release tag matches project metadata versions');
+  assert.ok(verifyStep, 'Expected Verify release tag step in release.yml');
+
+  const regexMatch = verifyStep.run.match(/\[\[\s*"\$TAG"\s*=~\s*([^\s]+)\s*\]\]/);
+  assert.ok(regexMatch, 'Expected bash regex match against $TAG in tag-guard');
+  const tagPattern = regexMatch[1];
+  assert.equal(tagPattern, '^v[0-9]+\\.[0-9]+\\.[0-9]+(-(alpha|beta|rc)\\.[1-9][0-9]*)?$');
+
+  const tagRegex = new RegExp(tagPattern);
+  for (const valid of ['v0.3.1', 'v1.0.0', 'v1.0.0-alpha.1', 'v1.0.0-beta.2', 'v1.0.0-rc.10']) {
+    assert.equal(tagRegex.test(valid), true, `Expected tag "${valid}" to match tag-guard regex`);
+  }
+  for (const invalid of [
+    '1.0.0',
+    'v1.0',
+    'v1.0.0-alpha',
+    'v1.0.0-alpha.0',
+    'v1.0.0-preview.1',
+    'v1.0.0a1',
+    'v1.0.0-alpha.1+build.1',
+    '',
+  ]) {
+    assert.equal(tagRegex.test(invalid), false, `Expected invalid tag "${invalid}" to be rejected by tag-guard regex`);
+  }
+
+  assert.match(verifyStep.run, /semverToPep440/, 'Expected tag-guard to compute PEP 440 parity via semverToPep440');
+  assert.match(verifyStep.run, /pyproject\.toml/, 'Expected tag-guard to verify pyproject.toml version parity');
+
+  const esmMatch = verifyStep.run.match(/EXPECTED_PY_VER=\$\(PKG_VER="\$PKG_VER"\s+node\s+--input-type=module\s+-e\s+"([^"]+)"\)/);
+  assert.ok(esmMatch, 'Expected inline node --input-type=module -e snippet for EXPECTED_PY_VER in tag-guard');
+  const esmScript = esmMatch[1];
+
+  for (const [semver, expectedPep440] of [
+    ['1.0.0-alpha.1', '1.0.0a1'],
+    ['1.0.0-beta.3', '1.0.0b3'],
+    ['1.0.0-rc.2', '1.0.0rc2'],
+    ['1.0.0', '1.0.0'],
+  ]) {
+    const esmRes = spawnSync(process.execPath, ['--input-type=module', '-e', esmScript], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PKG_VER: semver },
+    });
+    assert.equal(esmRes.status, 0, `Expected inline semverToPep440 snippet to succeed for ${semver}: ${esmRes.stderr}`);
+    assert.equal(esmRes.stdout.trim(), expectedPep440);
+  }
+
+  const badEsmRes = spawnSync(process.execPath, ['--input-type=module', '-e', esmScript], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, PKG_VER: '1.0.0-alpha.0' },
+  });
+  assert.notEqual(badEsmRes.status, 0, 'Expected inline semverToPep440 snippet to exit non-zero on invalid SemVer');
+
+  const pyVerMatch = verifyStep.run.match(/PY_VER=\$\(node\s+-p\s+'((?:[^']|'\\'')+)'\)/);
+  assert.ok(pyVerMatch, 'Expected inline node -p snippet for PY_VER extraction in tag-guard');
+  const pyVerScript = pyVerMatch[1].replace(/'\\''/g, "'");
+
+  withTempFixture(
+    {
+      'pyproject.toml': '[project]\nname = "tol-palettes"\nversion = "1.0.0a1"\n',
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.equal(pyRes.status, 0, `Expected PY_VER extraction to succeed: ${pyRes.stderr}`);
+      assert.equal(pyRes.stdout.trim(), '1.0.0a1');
+      assert.notEqual(pyRes.stdout.trim(), '1.0.0b1', 'Mismatched PEP 440 version must be distinguishable');
+    },
+  );
+
+  withTempFixture(
+    {
+      'pyproject.toml': "[project]\nname = 'tol-palettes'\nversion = '1.0.0rc2'\n",
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.equal(pyRes.status, 0, `Expected single-quoted PY_VER extraction to succeed: ${pyRes.stderr}`);
+      assert.equal(pyRes.stdout.trim(), '1.0.0rc2');
+    },
+  );
+
+  withTempFixture(
+    {
+      'pyproject.toml': '[project]\nname = "tol-palettes"\n',
+    },
+    (dir) => {
+      const pyRes = spawnSync(process.execPath, ['-p', pyVerScript], { cwd: dir, encoding: 'utf8' });
+      assert.notEqual(pyRes.status, 0, 'Expected missing version field in pyproject.toml to exit non-zero');
+    },
+  );
+});
+
+test('release.yml routes prereleases to next dist-tag, verifies PyPI digests, enforces git clean guard, and attests 100% of uploaded release assets', () => {
+  const releaseYmlText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  const releaseDoc = parseYaml(releaseYmlText);
+
+  for (const jobId of ['publish-npm', 'publish-gpr']) {
+    const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
+    const pubStep = steps.find((s) => typeof s.run === 'string' && s.run.includes('npm publish'));
+    assert.ok(pubStep, `Expected npm publish step in ${jobId}`);
+    assert.match(pubStep.run, /DIST_TAG="latest"/);
+    assert.match(pubStep.run, /if \[\[ "\$PKG_VER" == \*-\* \]\]; then\s+DIST_TAG="next"/);
+    assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG"/);
+  }
+
+  const pypiSteps = releaseDoc?.jobs?.['publish-pypi']?.steps || [];
+  const pypiBuild = pypiSteps.find((s) => s.name === 'Build sdist and wheel');
+  assert.ok(pypiBuild, 'Expected Build sdist and wheel step in publish-pypi');
+  assert.match(pypiBuild.run || '', /SOURCE_DATE_EPOCH="\$\(git log -1 --format=%ct\)"/);
+  assert.match(pypiBuild.run || '', /export SOURCE_DATE_EPOCH/);
+
+  const pypiPreCheck = pypiSteps.find((s) => s.name === 'Check existing PyPI release');
+  assert.ok(pypiPreCheck, 'Expected Check existing PyPI release step in publish-pypi');
+  assert.match(pypiPreCheck.run || '', /::warning ::/);
+
+  const pypiPublish = pypiSteps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('pypa/gh-action-pypi-publish@'));
+  assert.ok(pypiPublish, 'Expected pypa/gh-action-pypi-publish step in publish-pypi');
+  assert.equal(pypiPublish.with?.['skip-existing'], true);
+
+  const pypiVerify = pypiSteps.find((s) => s.name === 'Verify PyPI published digests');
+  assert.ok(pypiVerify, 'Expected Verify PyPI published digests post-publish step in publish-pypi');
+  assert.match(pypiVerify.run || '', /hashlib\.sha256/);
+  assert.match(pypiVerify.run || '', /sys\.exit\(1\)/);
+
+  const attachSteps = releaseDoc?.jobs?.['attach-assets']?.steps || [];
+  const genIdx = attachSteps.findIndex((s) => s.name === 'Generate game assets and package zip bundles');
+  const attestIdx = attachSteps.findIndex((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/attest@'));
+  const uploadIdx = attachSteps.findIndex((s) => s.name === 'Upload release assets to GitHub Release');
+  assert.ok(genIdx !== -1, 'Expected generate step in attach-assets');
+  assert.ok(attestIdx !== -1, 'Expected actions/attest step in attach-assets');
+  assert.ok(uploadIdx !== -1, 'Expected Upload release assets to GitHub Release step in attach-assets');
+  assert.ok(
+    genIdx < attestIdx && attestIdx < uploadIdx,
+    `Expected generate (${genIdx}) -> attest (${attestIdx}) -> upload (${uploadIdx}) step ordering in attach-assets`,
+  );
+
+  const genStep = attachSteps[genIdx];
+  assert.match(genStep.run, /test -z "\$\(git status --porcelain\)"/);
+
+  const attestStep = attachSteps[attestIdx];
+  const subjectLines = String(attestStep.with?.['subject-path'] || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  assert.deepEqual(subjectLines, [
+    'dist/assets/*.zip',
+    'dist/SHA256SUMS.txt',
+    'dist/manifest.json',
+    'dist/sri.json',
+    'dist/css/tol.css',
+    'dist/js/index.js',
+    'dist/json/schemes.json',
+    'dist/py/tol_palettes.py',
+    'LICENSE',
+    'NOTICE',
+  ]);
+
+  const uploadMatch = releaseYmlText.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+  assert.ok(uploadMatch, 'Expected gh release upload block in release.yml');
+  const uploadedFiles = uploadMatch[1]
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\\$/, '').trim())
+    .filter(Boolean);
+  assert.equal(uploadedFiles.length, 12, 'Expected 12 uploaded release assets');
+
+  const attestedSet = new Set();
+  for (const subj of subjectLines) {
+    if (subj === 'dist/assets/*.zip') {
+      const zipAssets = readdirSync(join(root, 'dist', 'assets')).filter((f) => f.endsWith('.zip'));
+      assert.ok(zipAssets.length > 0, 'Expected at least one .zip asset in dist/assets');
+      for (const z of zipAssets) {
+        attestedSet.add(`dist/assets/${z}`);
+      }
+    } else {
+      attestedSet.add(subj);
+    }
+  }
+  for (const uploaded of uploadedFiles) {
+    assert.ok(attestedSet.has(uploaded), `Uploaded release asset "${uploaded}" is not covered by actions/attest subject-path`);
+  }
+});
+
+function buildReleaseFixture({
+  workflowEnv = '',
+  verifyRef = '${{ needs.tag-guard.outputs.sha }}',
+  omitPublishNpm = false,
+  publishCheckoutRef = null,
+  jobPermissions = '      contents: read\n      id-token: write\n',
+  jobEnvironment = '    environment:\n      name: npm\n      url: https://www.npmjs.com/package/@kidthales/tol-palettes\n',
+  jobEnv = '',
+  includeSetupNode = true,
+  nodeVersion = "'>=24.5.0 <25'",
+  stepEnv = '',
+  publishRun = 'npm publish --tag latest --provenance --access public',
+} = {}) {
+  const checkoutBlock = publishCheckoutRef
+    ? `      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${publishCheckoutRef}
+          persist-credentials: false
+`
+    : '';
+  const setupNodeBlock = includeSetupNode
+    ? `      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${nodeVersion}
+          package-manager-cache: false
+`
+    : '';
+  const verifyWithBlock = verifyRef
+    ? `    with:
+      ref: ${verifyRef}
+`
+    : '';
+  const publishNpmBlock = omitPublishNpm
+    ? ''
+    : `  publish-npm:
+    needs: [tag-guard, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+${jobPermissions}${jobEnvironment}${jobEnv}    steps:
+${checkoutBlock}${setupNodeBlock}      - name: Publish to npm (Idempotent with Provenance)
+${stepEnv}        run: |
+          ${publishRun}
+`;
+
+  return `name: Release
+permissions:
+  contents: read
+concurrency:
+  group: release-\${{ github.repository }}
+  cancel-in-progress: false
+${workflowEnv}jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Verify release tag matches project metadata versions
+        run: exit 1
+  verify:
+    needs: [tag-guard]
+    uses: ./.github/workflows/ci.yml
+${verifyWithBlock}${publishNpmBlock}`;
+}
+
+test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive and negative)', () => {
+  withTempFixture({ 'release.yml': buildReleaseFixture() }, (dir) => {
+    const res = auditWorkflows(dir);
+    assert.equal(res.ok, true, `Expected valid OIDC publish-npm fixture to pass, got: ${res.violations.join('; ')}`);
+    assert.equal(res.violations.length, 0);
+  });
+
+  const negativeCases = [
+    {
+      name: 'missing publish-npm job',
+      opts: { omitPublishNpm: true },
+      expected: "missing 'publish-npm' job",
+    },
+    {
+      name: 'verify.with.ref not pinned to verified SHA',
+      opts: { verifyRef: "refs/tags/${{ inputs.tag }}" },
+      expected: 'verify job must pass verified SHA ref',
+    },
+    {
+      name: 'downstream checkout re-resolves tag instead of verified SHA',
+      opts: { publishCheckoutRef: "refs/tags/${{ inputs.tag }}" },
+      expected: 'must check out verified SHA ref',
+    },
+    {
+      name: 'missing id-token: write permission',
+      opts: { jobPermissions: '      contents: read\n' },
+      expected: 'exact permissions { contents: read, id-token: write }',
+    },
+    {
+      name: 'extra contents: write permission on publish-npm',
+      opts: { jobPermissions: '      contents: write\n      id-token: write\n' },
+      expected: 'exact permissions { contents: read, id-token: write }',
+    },
+    {
+      name: 'missing environment block',
+      opts: { jobEnvironment: '' },
+      expected: "must declare environment 'npm'",
+    },
+    {
+      name: 'non-npm environment name',
+      opts: { jobEnvironment: '    environment:\n      name: staging\n' },
+      expected: "must declare environment 'npm'",
+    },
+    {
+      name: 'wrong setup-node node-version (22 instead of >=24.5.0 <25)',
+      opts: { nodeVersion: 22 },
+      expected: "must set node-version: '>=24.5.0 <25'",
+    },
+    {
+      name: 'bare setup-node node-version (24 allows <24.5.0 with npm <11.5.1)',
+      opts: { nodeVersion: 24 },
+      expected: "must set node-version: '>=24.5.0 <25'",
+    },
+    {
+      name: 'missing actions/setup-node step',
+      opts: { includeSetupNode: false },
+      expected: "must include actions/setup-node with node-version: '>=24.5.0 <25'",
+    },
+    {
+      name: 'step-level NODE_AUTH_TOKEN env binding',
+      opts: { stepEnv: '        env:\n          NODE_AUTH_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NODE_AUTH_TOKEN'",
+    },
+    {
+      name: 'job-level NPM_TOKEN env binding',
+      opts: { jobEnv: '    env:\n      NPM_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_TOKEN'",
+    },
+    {
+      name: 'workflow-level NPM_TOKEN env binding',
+      opts: { workflowEnv: 'env:\n  NPM_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_TOKEN'",
+    },
+    {
+      name: 'inline run script NODE_AUTH_TOKEN assignment',
+      opts: { publishRun: 'NODE_AUTH_TOKEN="" npm publish --provenance --access public' },
+      expected: 'must not reference NODE_AUTH_TOKEN or NPM_TOKEN',
+    },
+    {
+      name: 'inline run script NODE_AUTH_TOKEN via GITHUB_ENV',
+      opts: { publishRun: 'echo "NODE_AUTH_TOKEN=tok" >> "$GITHUB_ENV"\n          npm publish --provenance --access public' },
+      expected: 'must not reference NODE_AUTH_TOKEN or NPM_TOKEN',
+    },
+    {
+      name: 'step-level NPM_CONFIG__AUTHTOKEN env binding',
+      opts: { stepEnv: '        env:\n          NPM_CONFIG__AUTHTOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_CONFIG__AUTHTOKEN'",
+    },
+    {
+      name: 'step-level lowercase npm_config__authtoken env binding',
+      opts: { stepEnv: '        env:\n          npm_config__authtoken: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'npm_config__authtoken'",
+    },
+    {
+      name: 'inline run script NPM_CONFIG__AUTHTOKEN assignment',
+      opts: { publishRun: 'NPM_CONFIG__AUTHTOKEN="tok" npm publish --provenance --access public' },
+      expected: 'must not reference NPM_CONFIG__AUTHTOKEN',
+    },
+    {
+      name: 'inline run script --_authToken= CLI flag',
+      opts: { publishRun: 'npm publish --_authToken="tok" --provenance --access public' },
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script registry-scoped --_authToken= CLI flag',
+      opts: { publishRun: 'npm publish --//registry.npmjs.org/:_authToken="tok" --provenance --access public' },
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script npm config set _authToken',
+      opts: { publishRun: 'npm config set //registry.npmjs.org/:_authToken tok\n          npm publish --provenance --access public' },
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script .npmrc _authToken append',
+      opts: { publishRun: 'echo "//registry.npmjs.org/:_authToken=tok" >> .npmrc\n          npm publish --provenance --access public' },
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script ad-hoc npm install outside lockfile',
+      opts: { publishRun: 'npm install -g npm@11.21.2\n          npm publish --provenance --access public' },
+      expected: "must not run ad-hoc 'npm install'",
+    },
+  ];
+
+  for (const tc of negativeCases) {
+    withTempFixture({ 'release.yml': buildReleaseFixture(tc.opts) }, (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false, `Expected negative case "${tc.name}" to fail Gate 0`);
+      assert.ok(
+        res.violations.some((v) => v.includes(tc.expected)),
+        `Expected "${tc.name}" violation to include "${tc.expected}", got: ${res.violations.join('; ')}`,
+      );
+    });
+  }
+});
+
+test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-closed npm >= 11.5.1 guard without ad-hoc installs', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+
+  assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NODE_AUTH_TOKEN'), false);
+  assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NPM_TOKEN'), false);
+
+  const pubNpm = releaseDoc?.jobs?.['publish-npm'];
+  assert.ok(pubNpm, 'Expected publish-npm job in release.yml');
+  assert.deepEqual(pubNpm.permissions, { contents: 'read', 'id-token': 'write' });
+  assert.deepEqual(pubNpm.environment, {
+    name: 'npm',
+    url: 'https://www.npmjs.com/package/@kidthales/tol-palettes',
+  });
+  assert.equal(Object.hasOwn(pubNpm.env || {}, 'NODE_AUTH_TOKEN'), false);
+  assert.equal(Object.hasOwn(pubNpm.env || {}, 'NPM_TOKEN'), false);
+
+  const steps = pubNpm.steps || [];
+  const setupNode = steps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'));
+  assert.ok(setupNode, 'Expected actions/setup-node step in publish-npm');
+  assert.equal(setupNode.with?.['node-version'], '>=24.5.0 <25');
+  assert.equal(setupNode.with?.['registry-url'], 'https://registry.npmjs.org');
+  assert.equal(setupNode.with?.['package-manager-cache'], false);
+
+  for (const step of steps) {
+    assert.equal(Object.hasOwn(step.env || {}, 'NODE_AUTH_TOKEN'), false);
+    assert.equal(Object.hasOwn(step.env || {}, 'NPM_TOKEN'), false);
+    if (typeof step.run === 'string') {
+      assert.equal(/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run), false);
+      assert.equal(/_authToken/i.test(step.run), false);
+      assert.equal(/\bnpm\s+(?:install|i|add)\b/.test(step.run), false);
+    }
+  }
+
+  const pubStep = steps.find((s) => s.name === 'Publish to npm (Idempotent with Provenance)');
+  assert.ok(pubStep, 'Expected Publish to npm (Idempotent with Provenance) step');
+  assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG" --provenance --access public/);
+
+  const guardMatch = pubStep.run.match(/is_valid_npm\(\)\s*\{\s*node -e '([^']+)' "\$1"\s*\}/);
+  assert.ok(guardMatch, 'Expected fail-closed inline node -e npm >= 11.5.1 guard in is_valid_npm()');
+  const guardScript = guardMatch[1];
+
+  for (const validVer of ['11.5.1', '11.5.1+build.1', '11.5.2-rc.0', '11.5.2', '11.6.0', '12.0.0']) {
+    const res = spawnSync(process.execPath, ['-e', guardScript, validVer], { encoding: 'utf8' });
+    assert.equal(res.status, 0, `Expected npm version ${validVer} to pass OIDC version guard`);
+  }
+  for (const invalidVer of ['11.5.1-rc.0', '11.5.1-0', '11.5.1foo', '11.5.1.0', '11.5.0', '11.4.9', '10.9.2', '0.0.0', 'not-a-semver']) {
+    const res = spawnSync(process.execPath, ['-e', guardScript, invalidVer], { encoding: 'utf8' });
+    assert.notEqual(res.status, 0, `Expected npm version ${invalidVer} to fail OIDC version guard`);
+  }
+});
+
+test('.github/zizmor.yml scopes use-trusted-publishing to publish-gpr npm publish line without drift and scopes self-repository to bare workflow filenames', () => {
+  const zizmorPath = join(root, '.github', 'zizmor.yml');
+  assert.equal(existsSync(zizmorPath), true, 'Expected .github/zizmor.yml to exist');
+
+  const zizmorDoc = parseYaml(readFileSync(zizmorPath, 'utf8'));
+  const trustedIgnore = zizmorDoc?.rules?.['use-trusted-publishing']?.ignore;
+  assert.ok(Array.isArray(trustedIgnore), 'Expected rules.use-trusted-publishing.ignore array in .github/zizmor.yml');
+  assert.equal(trustedIgnore.length, 1, 'Expected use-trusted-publishing ignore to pin strictly 1 line in release.yml');
+
+  const linePinMatch = String(trustedIgnore[0]).match(/^release\.yml:(\d+)$/);
+  assert.ok(linePinMatch, `Expected release.yml:<line> entry, got: ${trustedIgnore[0]}`);
+  const pinnedLineNum = Number(linePinMatch[1]);
+
+  const releaseText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.equal(releaseText.includes('# zizmor: ignore'), false, 'release.yml must not contain inline # zizmor: ignore comments');
+
+  const releaseLines = releaseText.split(/\r?\n/);
+  assert.ok(pinnedLineNum >= 1 && pinnedLineNum <= releaseLines.length, `Pinned line ${pinnedLineNum} out of range`);
+
+  const publishGprStart = releaseLines.findIndex((l) => /^\s{2}publish-gpr:\s*$/.test(l)) + 1;
+  const publishPypiStart = releaseLines.findIndex((l) => /^\s{2}publish-pypi:\s*$/.test(l)) + 1;
+  assert.ok(publishGprStart > 0 && publishPypiStart > publishGprStart, 'Expected publish-gpr before publish-pypi in release.yml');
+
+  const gprPublishOffset = releaseLines
+    .slice(publishGprStart - 1, publishPypiStart - 1)
+    .findIndex((l) => /^\s*npm publish\b.*--registry=https:\/\/npm\.pkg\.github\.com\/$/.test(l));
+  assert.ok(gprPublishOffset >= 0, 'Expected npm publish --registry=https://npm.pkg.github.com/ inside publish-gpr');
+  const actualGprPublishLine = publishGprStart + gprPublishOffset;
+
+  assert.equal(
+    pinnedLineNum,
+    actualGprPublishLine,
+    `zizmor line pin drifted: .github/zizmor.yml pins release.yml:${pinnedLineNum}, but publish-gpr's npm publish is at release.yml:${actualGprPublishLine}. Update .github/zizmor.yml to release.yml:${actualGprPublishLine}.`,
+  );
+
+  const selfRepoIgnore = zizmorDoc?.rules?.['self-repository']?.ignore;
+  assert.deepEqual(selfRepoIgnore, ['pages.yml', 'release.yml']);
+  for (const wfFile of selfRepoIgnore) {
+    assert.equal(existsSync(join(root, '.github', 'workflows', wfFile)), true, `Expected ${wfFile} to exist`);
+  }
 });

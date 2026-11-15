@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { isDirectCli } from './path-jail.mjs';
 
 export const DEFAULT_MAX_TIMEOUT_MINUTES = 30;
 
@@ -31,6 +32,8 @@ export const EXACT_STEP_ALLOWLIST = new Set([
   'publish-gpr/Publish to GitHub Packages (Idempotent)',
   'publish-pypi/Install build tool',
   'publish-pypi/Build sdist and wheel',
+  'publish-pypi/Check existing PyPI release',
+  'publish-pypi/Verify PyPI published digests',
   'attach-assets/Install dependencies',
   'attach-assets/Generate game assets and package zip bundles',
   'attach-assets/package:assets',
@@ -54,6 +57,80 @@ export const FORBIDDEN_COMMAND_PATTERNS = [
   { name: 'npm run validate', regex: /\bnpm\s+run\s+validate\b/ },
   { name: 'npm pack', regex: /\bnpm\s+pack\b/ },
 ];
+
+export const FORBIDDEN_NPM_OIDC_ENV_KEYS = ['NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_CONFIG__AUTHTOKEN'];
+
+function checkForbiddenEnvBindings(envObj, forbiddenKeys, contextLabel, violations) {
+  if (!envObj || typeof envObj !== 'object' || Array.isArray(envObj)) return;
+  const upperForbidden = new Set(forbiddenKeys.map((k) => k.toUpperCase()));
+  for (const key of Object.keys(envObj)) {
+    if (upperForbidden.has(key.toUpperCase()) || /^NPM_CONFIG_.*_AUTHTOKEN$/i.test(key)) {
+      violations.push(`${contextLabel} must not bind forbidden env '${key}' (tokenless OIDC required)`);
+    }
+  }
+}
+
+function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
+  const perms = pubNpm.permissions;
+  const permKeys = perms && typeof perms === 'object' && !Array.isArray(perms) ? Object.keys(perms) : [];
+  if (
+    !perms ||
+    typeof perms !== 'object' ||
+    Array.isArray(perms) ||
+    permKeys.length !== 2 ||
+    perms.contents !== 'read' ||
+    perms['id-token'] !== 'write'
+  ) {
+    violations.push(
+      `${wfName}: publish-npm job must declare exact permissions { contents: read, id-token: write } for OIDC Trusted Publishing`,
+    );
+  }
+
+  const envName = typeof pubNpm.environment === 'string' ? pubNpm.environment : pubNpm.environment?.name;
+  if (envName !== 'npm') {
+    violations.push(`${wfName}: publish-npm job must declare environment 'npm' for OIDC Trusted Publishing (got '${envName ?? ''}')`);
+  }
+
+  const requiredNodeRange = '>=24.5.0 <25';
+  const steps = Array.isArray(pubNpm.steps) ? pubNpm.steps : [];
+  const setupNodeSteps = steps.filter(
+    (s) => s && typeof s === 'object' && typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'),
+  );
+  if (setupNodeSteps.length === 0) {
+    violations.push(`${wfName}: publish-npm job must include actions/setup-node with node-version: '${requiredNodeRange}'`);
+  } else {
+    for (const snStep of setupNodeSteps) {
+      const nv = String(snStep.with?.['node-version'] ?? '').trim();
+      if (nv !== requiredNodeRange) {
+        violations.push(
+          `${wfName}: publish-npm job step '${snStep.name || 'setup-node'}' must set node-version: '${requiredNodeRange}' (got '${nv}')`,
+        );
+      }
+    }
+  }
+
+  checkForbiddenEnvBindings(doc.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, `${wfName}: workflow`, violations);
+  checkForbiddenEnvBindings(pubNpm.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, `${wfName}: publish-npm job`, violations);
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const stepLabel = `${wfName}: publish-npm step '${step.name || 'unnamed'}'`;
+    checkForbiddenEnvBindings(step.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, stepLabel, violations);
+    if (typeof step.run === 'string') {
+      if (/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run)) {
+        violations.push(`${stepLabel} must not reference NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
+      }
+      if (/\bNPM_CONFIG_(?:[A-Z0-9_]*_)?_AUTHTOKEN\b/i.test(step.run)) {
+        violations.push(`${stepLabel} must not reference NPM_CONFIG__AUTHTOKEN in run script`);
+      }
+      if (/_authToken/i.test(step.run)) {
+        violations.push(`${stepLabel} must not reference _authToken in run script (CLI flags, npm config, or .npmrc writes forbidden)`);
+      }
+      if (/\bnpm\s+(?:install|i|add)\b/.test(step.run)) {
+        violations.push(`${stepLabel} must not run ad-hoc 'npm install' (use 'npm ci' and Node >=24.5.0 bundled npm)`);
+      }
+    }
+  }
+}
 
 /**
  * Checks whether a string contains any ${{ ... }} expression.
@@ -213,15 +290,17 @@ export function auditWorkflows(targetPath, options = {}) {
       // Job-level reusable workflow call check
       if (job.uses) {
         const u = String(job.uses);
-        if (u.startsWith('$/') || u.startsWith('./')) {
+        if (u.startsWith('$')) {
+          violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$' prefix is invalid; use './' for same-repository workflow references)`);
+        } else if (u.startsWith('./')) {
           if (u.includes('..') || u.includes('\\')) {
             violations.push(`${wfName}: job '${jobId}' uses non-canonical workflow path '${u}'`);
           }
-          if (u.startsWith('$/') && u.includes('@')) {
-            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('$/' same-repository workflow references must not specify an @ref)`);
+          if (u.includes('@')) {
+            violations.push(`${wfName}: job '${jobId}' uses invalid workflow target '${u}' ('./' same-repository workflow references must not specify an @ref)`);
           }
         } else if (u.startsWith('../')) {
-          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with '$/' or './')`);
+          violations.push(`${wfName}: job '${jobId}' uses non-canonical relative workflow path '${u}' (must start with './')`);
         } else if (u.startsWith('docker://')) {
           if (!/@sha256:[0-9a-fA-F]{64}$/.test(u)) {
             violations.push(`${wfName}: job '${jobId}' uses unpinned docker action '${u}' (must pin to @sha256 digest)`);
@@ -245,11 +324,14 @@ export function auditWorkflows(targetPath, options = {}) {
         // 4. Action uses pinning and canonical path checks
         if (step.uses) {
           const uses = String(step.uses);
-          if (uses.startsWith('$/')) {
-            violations.push(`${wfName}: step '${stepName}' uses '$/' which is only valid for reusable workflow calls at job level ('${uses}')`);
+          if (uses.startsWith('$')) {
+            violations.push(`${wfName}: step '${stepName}' uses invalid action target '${uses}' ('$' prefix is invalid)`);
           } else if (uses.startsWith('./')) {
             if (uses.includes('..') || uses.includes('\\')) {
               violations.push(`${wfName}: step '${stepName}' uses non-canonical local action path '${uses}'`);
+            }
+            if (uses.includes('@')) {
+              violations.push(`${wfName}: step '${stepName}' uses invalid local action target '${uses}' ('./' same-repository local action references must not specify an @ref)`);
             }
           } else if (uses.startsWith('../')) {
             violations.push(`${wfName}: step '${stepName}' uses non-canonical relative path '${uses}' (must start with './')`);
@@ -315,8 +397,8 @@ export function auditWorkflows(targetPath, options = {}) {
       if (jobId === 'test-and-build' || jobId === 'verify') {
         if (steps.length > 0 && !jobRunsCanonicalCi) {
           violations.push(`${wfName}: verify job '${jobId}' defines steps but does not invoke './scripts/ci-local.ps1 -CI'.`);
-        } else if (steps.length === 0 && job.uses !== '$/.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call '$/.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
+        } else if (steps.length === 0 && job.uses !== './.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job '${jobId}' must either invoke './scripts/ci-local.ps1 -CI' or call './.github/workflows/ci.yml' (got uses: '${job.uses || ''}').`);
         }
       }
     }
@@ -361,8 +443,8 @@ export function auditWorkflows(targetPath, options = {}) {
       // pages.yml: verify delegation
       if (!jobs.verify) {
         violations.push(`${wfName}: missing 'verify' job delegation`);
-      } else if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
-        violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+      } else if (jobs.verify.uses !== './.github/workflows/ci.yml') {
+        violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
       }
 
       // pages.yml: build job needs verify
@@ -400,12 +482,15 @@ export function auditWorkflows(targetPath, options = {}) {
         if (!needs.includes('tag-guard')) {
           violations.push(`${wfName}: verify job must declare needs: [tag-guard]`);
         }
-        if (jobs.verify.uses !== '$/.github/workflows/ci.yml') {
-          violations.push(`${wfName}: verify job must delegate to '$/.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+        if (jobs.verify.uses !== './.github/workflows/ci.yml') {
+          violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
+        }
+        if (jobs.verify.with?.ref !== '${{ needs.tag-guard.outputs.sha }}') {
+          violations.push(`${wfName}: verify job must pass verified SHA ref '\${{ needs.tag-guard.outputs.sha }}' to ci.yml`);
         }
       }
 
-      // release.yml: package-manager-cache: false across all setup-node steps
+      // release.yml: package-manager-cache: false across all setup-node steps & verified-SHA checkout in downstream jobs
       for (const [jobId, job] of Object.entries(jobs)) {
         for (const step of Array.isArray(job.steps) ? job.steps : []) {
           if (step.uses && step.uses.startsWith('actions/setup-node@')) {
@@ -413,7 +498,21 @@ export function auditWorkflows(targetPath, options = {}) {
               violations.push(`${wfName}: job '${jobId}' step '${step.name || 'setup-node'}' must set package-manager-cache: false`);
             }
           }
+          if (jobId !== 'tag-guard' && step.uses && step.uses.startsWith('actions/checkout@')) {
+            if (step.with?.ref !== '${{ needs.tag-guard.outputs.sha }}') {
+              violations.push(
+                `${wfName}: job '${jobId}' step '${step.name || 'checkout'}' must check out verified SHA ref '\${{ needs.tag-guard.outputs.sha }}'`,
+              );
+            }
+          }
         }
+      }
+
+      // release.yml: require publish-npm and enforce tokenless OIDC Trusted Publishing contract
+      if (!jobs['publish-npm']) {
+        violations.push(`${wfName}: missing 'publish-npm' job`);
+      } else {
+        auditPublishNpmOidcContract(wfName, doc, jobs['publish-npm'], violations);
       }
 
       // release.yml: provenance attestation in attach-assets
@@ -434,8 +533,7 @@ export function auditWorkflows(targetPath, options = {}) {
 }
 
 // CLI entrypoint
-const isDirectCli = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-if (isDirectCli) {
+if (isDirectCli(import.meta.url)) {
   let targetDir = '';
   for (let i = 2; i < process.argv.length; i++) {
     const arg = process.argv[i];

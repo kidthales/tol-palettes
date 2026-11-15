@@ -17,6 +17,8 @@
     Skips the distribution regeneration and drift verification step.
 .PARAMETER Gate0Only
     Executes Gate 0 workflow contract verification and exits.
+.PARAMETER Gate1Only
+    Executes Gate 1 action pin and agent leak verification and exits.
 .PARAMETER WorkflowsPath
     Optional path override to .github/workflows directory (for testing).
 .EXAMPLE
@@ -30,9 +32,11 @@ param(
     [switch]$Quick,
     [switch]$SkipGenerate,
     [switch]$Gate0Only,
+    [switch]$Gate1Only,
     [string]$WorkflowsPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
@@ -87,6 +91,7 @@ if ($CI) {
     if ($Quick) { $rejectedFlags += "-Quick" }
     if ($SkipGenerate) { $rejectedFlags += "-SkipGenerate" }
     if ($Gate0Only) { $rejectedFlags += "-Gate0Only" }
+    if ($Gate1Only) { $rejectedFlags += "-Gate1Only" }
     if ($rejectedFlags.Count -gt 0) {
         $flagList = $rejectedFlags -join ", "
         [Console]::Error.WriteLine("ERROR: -CI mode is fail-closed and cannot be combined with skip or quick flags ($flagList).")
@@ -98,7 +103,7 @@ if ($CI) {
         @{ Name = "git"; Hint = "Install Git and ensure 'git' is on PATH." },
         @{ Name = "node"; Hint = "Install Node.js 22+ and ensure 'node' is on PATH." },
         @{ Name = "npm"; Hint = "Ensure 'npm' is on PATH." },
-        @{ Name = "python"; Hint = "Install Python 3.12+ and ensure 'python' is on PATH." }
+        @{ Name = "python"; Hint = "Install Python 3.11+ and ensure 'python' is on PATH." }
     )
     foreach ($tool in $requiredTools) {
         if (-not (Get-Command $tool.Name -ErrorAction SilentlyContinue)) {
@@ -108,6 +113,11 @@ if ($CI) {
     }
 }
 
+
+if ($Gate0Only -and $Gate1Only) {
+    [Console]::Error.WriteLine("ERROR: -Gate0Only and -Gate1Only cannot be combined.")
+    exit 1
+}
 
 Write-Host "====================================================" -ForegroundColor Cyan
 Write-Host " tol-palettes Local CI Pipeline$(if ($CI) { ' [-CI Fail-Closed Mode]' } else { '' })" -ForegroundColor Cyan
@@ -140,24 +150,26 @@ try {
     # Gate 0: Workflow Verify-Job Single-Source Contract
     # -------------------------------------------------------------
     $EffectiveWorkflowsDir = if ($WorkflowsPath) { $WorkflowsPath } else { [System.IO.Path]::Combine($RootDir, ".github", "workflows") }
-    Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
-    try {
-        & node (Join-Path $RootDir "tools" "check-workflows.mjs") --workflows-dir $EffectiveWorkflowsDir
-        if ($LASTEXITCODE -ne 0) {
-            throw "Gate 0 workflow single-source verification failed."
+    if (-not $Gate1Only) {
+        Enter-CiGate "[0/4] Gate 0: Verifying workflow single-source contract & exact step allowlist..."
+        try {
+            & node (Join-Path $RootDir "tools" "check-workflows.mjs") --workflows-dir $EffectiveWorkflowsDir
+            if ($LASTEXITCODE -ne 0) {
+                throw "Gate 0 workflow single-source verification failed."
+            }
+            $GateResults["gate0_workflow_contract"] = "pass"
+            Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
+        } catch {
+            $GateResults["gate0_workflow_contract"] = "fail"
+            throw
+        } finally {
+            Exit-CiGate
         }
-        $GateResults["gate0_workflow_contract"] = "pass"
-        Write-Host "  -> All workflow run steps conform to ci-local.ps1 -CI or exact job-id/step-name allowlist." -ForegroundColor Green
-    } catch {
-        $GateResults["gate0_workflow_contract"] = "fail"
-        throw
-    } finally {
-        Exit-CiGate
-    }
 
-    if ($Gate0Only) {
-        Write-CiGateSummary $GateResults
-        exit 0
+        if ($Gate0Only) {
+            Write-CiGateSummary $GateResults
+            exit 0
+        }
     }
 
     # -------------------------------------------------------------
@@ -168,32 +180,52 @@ try {
         $StepTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
         # Check action pins in all workflow files
-        if (Test-Path $EffectiveWorkflowsDir) {
-            $WorkflowFiles = Get-ChildItem -Path $EffectiveWorkflowsDir -File | Where-Object { $_.Extension -in @(".yml", ".yaml") }
-            $UnpinnedFound = $false
-            foreach ($wf in $WorkflowFiles) {
-                $lines = Get-Content $wf.FullName
-                for ($i = 0; $i -lt $lines.Count; $i++) {
-                    $line = $lines[$i]
-                    if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
-                        $target = $matches[1]
-                        if ($target -match '^\$/') {
-                            if ($target -match '@') {
-                                Write-Error "Invalid reusable workflow target in $($wf.Name) line $($i+1): $target ('$/' same-repository workflow references must not specify an @ref)"
-                                $UnpinnedFound = $true
-                            }
-                        } elseif ($target -notmatch '^(\./|\.\./|docker://)') {
-                            if ($target -notmatch '@[0-9a-fA-F]{40}') {
-                                Write-Error "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
-                                $UnpinnedFound = $true
-                            }
+        if (-not (Test-Path -Path $EffectiveWorkflowsDir -PathType Container)) {
+            throw "Gate 1 Failed: Workflows directory not found: $EffectiveWorkflowsDir"
+        }
+
+        $WorkflowFiles = @(Get-ChildItem -Path $EffectiveWorkflowsDir -File | Where-Object { $_.Extension -in @(".yml", ".yaml") })
+        if ($WorkflowFiles.Count -eq 0) {
+            throw "Gate 1 Failed: No workflow files (*.yml, *.yaml) found in $EffectiveWorkflowsDir"
+        }
+
+        $UnpinnedFound = $false
+        foreach ($wf in $WorkflowFiles) {
+            $lines = @(Get-Content -Path $wf.FullName)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line -match '^\s*(?:-\s+)?uses:\s*[''"]?([^''"\s#]+)[''"]?') {
+                    $target = $matches[1]
+                    if ($target -match '^\$') {
+                        Write-Fail "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('$' prefix is invalid; use './' for same-repository references)"
+                        $UnpinnedFound = $true
+                    } elseif ($target -match '^\.\./') {
+                        Write-Fail "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical relative path; must start with './')"
+                        $UnpinnedFound = $true
+                    } elseif ($target -match '^\./') {
+                        if ($target -match '\.\.|\\') {
+                            Write-Fail "Invalid workflow/action target in $($wf.Name) line $($i+1): $target (non-canonical local path)"
+                            $UnpinnedFound = $true
+                        } elseif ($target -match '@') {
+                            Write-Fail "Invalid workflow/action target in $($wf.Name) line $($i+1): $target ('./' same-repository references must not specify an @ref)"
+                            $UnpinnedFound = $true
+                        }
+                    } elseif ($target -match '^docker://') {
+                        if ($target -notmatch '@sha256:[0-9a-fA-F]{64}$') {
+                            Write-Fail "Unpinned docker action in $($wf.Name) line $($i+1): $target (must pin to @sha256 digest)"
+                            $UnpinnedFound = $true
+                        }
+                    } else {
+                        if ($target -notmatch '@[0-9a-fA-F]{40}$') {
+                            Write-Fail "Unpinned action in $($wf.Name) line $($i+1): $target (must pin to 40-char commit SHA)"
+                            $UnpinnedFound = $true
                         }
                     }
                 }
             }
-            if ($UnpinnedFound) {
-                throw "Gate 1 Failed: GitHub Actions commit SHA pin verification failed."
-            }
+        }
+        if ($UnpinnedFound) {
+            throw "Gate 1 Failed: GitHub Actions commit SHA pin verification failed."
         }
 
         # Check agent and scratch file leaks
@@ -235,6 +267,11 @@ try {
         Exit-CiGate
     }
 
+    if ($Gate1Only) {
+        Write-CiGateSummary $GateResults
+        exit 0
+    }
+
     # -------------------------------------------------------------
     # Gate 2: PowerShell AST, Linter & Schema Validation
     # -------------------------------------------------------------
@@ -263,7 +300,7 @@ try {
         }
 
         # PowerShell AST parse validation for scripts
-        $Ps1Files = Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules)[\\/]' }
+        $Ps1Files = @(Get-ChildItem -Path $RootDir -Recurse -Filter "*.ps1" | Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules)[\\/]' })
         $ParseErrors = 0
         foreach ($ps in $Ps1Files) {
             $tokens = $null

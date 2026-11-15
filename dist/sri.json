@@ -1,6 +1,6 @@
 {
   "package": "@kidthales/tol-palettes",
-  "version": "0.3.1",
+  "version": "1.0.0-alpha.1",
   "files": {
     "dist/css/banded-12.css": {
       "bytes": 767,
@@ -125,12 +125,12 @@
     "dist/js/index.js": {
       "bytes": 29590,
       "gzipBytes": 5132,
-      "integrity": "sha384-sbQRpglxX0MFKb/WArhUx+U7vt05WiOQarCqXU0tnNNIFJ7guSOh1YUd45tQc5xa"
+      "integrity": "sha384-LcOr8Wn5P7ZG8rVDGJ6CLg+FfUyGh/86L4OdvHMniw36XmesuaN8Vol0f8+0t5Co"
     },
     "dist/json/schemes.json": {
       "bytes": 29456,
       "gzipBytes": 3144,
-      "integrity": "sha384-MYxJ4ZLhgJQkNqttvOYOSmoLdHesEThnuC30bMlZABCs2lRXnxoc26fBWeZtC0sw"
+      "integrity": "sha384-eyy7xMGIgyVgBCsa+Mj2de0vydwi1jp4hLbZGu4dHcltIP9j4uhDXS2XuXyTCGZc"
     }
   }
 }

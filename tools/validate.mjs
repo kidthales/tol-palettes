@@ -4,19 +4,21 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
+import { isDirectCli } from './path-jail.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const schemesDir = join(root, 'data', 'schemes');
 
-export function loadSchema() {
-  return JSON.parse(readFileSync(join(root, 'schema', 'scheme.schema.json'), 'utf8'));
+export function loadSchema(targetRoot = root) {
+  return JSON.parse(readFileSync(join(targetRoot, 'schema', 'scheme.schema.json'), 'utf8'));
 }
 
-export function loadSchemes() {
-  return readdirSync(schemesDir)
+export function loadSchemes(targetRoot = root) {
+  const dir = join(targetRoot, 'data', 'schemes');
+  return readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .sort()
-    .map((f) => ({ file: f, data: JSON.parse(readFileSync(join(schemesDir, f), 'utf8')) }));
+    .map((f) => ({ file: f, data: JSON.parse(readFileSync(join(dir, f), 'utf8')) }));
 }
 
 /** Returns a list of human-readable problems for one scheme (empty when valid). */
@@ -62,16 +64,16 @@ export function invariantProblems(scheme, file) {
   return problems;
 }
 
-export function makeValidator() {
+export function makeValidator(targetRoot = root) {
   // strictRequired is off because source.anyOf lists required properties declared on the parent object.
   const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false, validateFormats: false });
-  return ajv.compile(loadSchema());
+  return ajv.compile(loadSchema(targetRoot));
 }
 
-export function validateAll() {
-  const validate = makeValidator();
+export function validateAll(targetRoot = root) {
+  const validate = makeValidator(targetRoot);
   const results = [];
-  for (const { file, data } of loadSchemes()) {
+  for (const { file, data } of loadSchemes(targetRoot)) {
     const problems = [];
     if (!validate(data)) {
       for (const e of validate.errors) problems.push(`${e.instancePath || '/'} ${e.message}`);
@@ -83,7 +85,7 @@ export function validateAll() {
   return results;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isDirectCli(import.meta.url)) {
   const results = validateAll();
   let failed = 0;
   for (const r of results) {
