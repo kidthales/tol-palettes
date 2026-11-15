@@ -1141,7 +1141,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 24
+          node-version: '>=24.5.0 <25'
           package-manager-cache: false
       - name: Publish to npm (Idempotent with Provenance)
         run: npm publish --tag latest --provenance --access public
@@ -1550,7 +1550,7 @@ function buildReleaseFixture({
   jobEnvironment = '    environment:\n      name: npm\n      url: https://www.npmjs.com/package/@kidthales/tol-palettes\n',
   jobEnv = '',
   includeSetupNode = true,
-  nodeVersion = 24,
+  nodeVersion = "'>=24.5.0 <25'",
   stepEnv = '',
   publishRun = 'npm publish --tag latest --provenance --access public',
 } = {}) {
@@ -1653,14 +1653,19 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
       expected: "must declare environment 'npm'",
     },
     {
-      name: 'wrong setup-node node-version (22 instead of 24)',
+      name: 'wrong setup-node node-version (22 instead of >=24.5.0 <25)',
       opts: { nodeVersion: 22 },
-      expected: 'must set node-version: 24',
+      expected: "must set node-version: '>=24.5.0 <25'",
+    },
+    {
+      name: 'bare setup-node node-version (24 allows <24.5.0 with npm <11.5.1)',
+      opts: { nodeVersion: 24 },
+      expected: "must set node-version: '>=24.5.0 <25'",
     },
     {
       name: 'missing actions/setup-node step',
       opts: { includeSetupNode: false },
-      expected: 'must include actions/setup-node with node-version: 24',
+      expected: "must include actions/setup-node with node-version: '>=24.5.0 <25'",
     },
     {
       name: 'step-level NODE_AUTH_TOKEN env binding',
@@ -1722,6 +1727,11 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
       opts: { publishRun: 'echo "//registry.npmjs.org/:_authToken=tok" >> .npmrc\n          npm publish --provenance --access public' },
       expected: 'must not reference _authToken',
     },
+    {
+      name: 'inline run script ad-hoc npm install outside lockfile',
+      opts: { publishRun: 'npm install -g npm@11.21.2\n          npm publish --provenance --access public' },
+      expected: "must not run ad-hoc 'npm install'",
+    },
   ];
 
   for (const tc of negativeCases) {
@@ -1736,7 +1746,7 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
   }
 });
 
-test('release.yml publish-npm uses tokenless OIDC trusted publishing and self-healing fail-closed npm >= 11.5.1 guard', () => {
+test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-closed npm >= 11.5.1 guard without ad-hoc installs', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
 
   assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NODE_AUTH_TOKEN'), false);
@@ -1755,7 +1765,7 @@ test('release.yml publish-npm uses tokenless OIDC trusted publishing and self-he
   const steps = pubNpm.steps || [];
   const setupNode = steps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'));
   assert.ok(setupNode, 'Expected actions/setup-node step in publish-npm');
-  assert.equal(setupNode.with?.['node-version'], 24);
+  assert.equal(setupNode.with?.['node-version'], '>=24.5.0 <25');
   assert.equal(setupNode.with?.['registry-url'], 'https://registry.npmjs.org');
   assert.equal(setupNode.with?.['package-manager-cache'], false);
 
@@ -1765,12 +1775,12 @@ test('release.yml publish-npm uses tokenless OIDC trusted publishing and self-he
     if (typeof step.run === 'string') {
       assert.equal(/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run), false);
       assert.equal(/_authToken/i.test(step.run), false);
+      assert.equal(/\bnpm\s+(?:install|i|add)\b/.test(step.run), false);
     }
   }
 
   const pubStep = steps.find((s) => s.name === 'Publish to npm (Idempotent with Provenance)');
   assert.ok(pubStep, 'Expected Publish to npm (Idempotent with Provenance) step');
-  assert.match(pubStep.run, /npm install -g npm@11\.21\.2/);
   assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG" --provenance --access public/);
 
   const guardMatch = pubStep.run.match(/is_valid_npm\(\)\s*\{\s*node -e '([^']+)' "\$1"\s*\}/);

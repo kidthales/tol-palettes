@@ -116,7 +116,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: '>=24.5.0 <25' # Node >=24.5.0 natively bundles npm >=11.5.1 for OIDC Trusted Publishing
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false
 
@@ -129,11 +129,6 @@ jobs:
             node -e 'const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(process.argv[1].trim()); if (!m) process.exit(1); const maj = +m[1], min = +m[2], pat = +m[3], pre = m[4]; if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && (pat < 1 || (pat === 1 && pre !== undefined)))))) process.exit(1);' "$1"
           }
           NPM_VER=$(npm --version)
-          if ! is_valid_npm "$NPM_VER"; then
-            echo "::notice ::Bundled npm ($NPM_VER) is older than 11.5.1; upgrading to pinned npm@11.21.2 for OIDC Trusted Publishing..."
-            npm install -g npm@11.21.2
-            NPM_VER=$(npm --version)
-          fi
           if ! is_valid_npm "$NPM_VER"; then
             echo "::error::npm >= 11.5.1 is required for OIDC Trusted Publishing (found $NPM_VER)."
             exit 1

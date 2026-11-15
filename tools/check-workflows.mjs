@@ -91,17 +91,20 @@ function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
     violations.push(`${wfName}: publish-npm job must declare environment 'npm' for OIDC Trusted Publishing (got '${envName ?? ''}')`);
   }
 
+  const requiredNodeRange = '>=24.5.0 <25';
   const steps = Array.isArray(pubNpm.steps) ? pubNpm.steps : [];
   const setupNodeSteps = steps.filter(
     (s) => s && typeof s === 'object' && typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'),
   );
   if (setupNodeSteps.length === 0) {
-    violations.push(`${wfName}: publish-npm job must include actions/setup-node with node-version: 24`);
+    violations.push(`${wfName}: publish-npm job must include actions/setup-node with node-version: '${requiredNodeRange}'`);
   } else {
     for (const snStep of setupNodeSteps) {
-      const nv = snStep.with?.['node-version'];
-      if (nv !== 24 && nv !== '24') {
-        violations.push(`${wfName}: publish-npm job step '${snStep.name || 'setup-node'}' must set node-version: 24 (got '${nv ?? ''}')`);
+      const nv = String(snStep.with?.['node-version'] ?? '').trim();
+      if (nv !== requiredNodeRange) {
+        violations.push(
+          `${wfName}: publish-npm job step '${snStep.name || 'setup-node'}' must set node-version: '${requiredNodeRange}' (got '${nv}')`,
+        );
       }
     }
   }
@@ -121,6 +124,9 @@ function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
       }
       if (/_authToken/i.test(step.run)) {
         violations.push(`${stepLabel} must not reference _authToken in run script (CLI flags, npm config, or .npmrc writes forbidden)`);
+      }
+      if (/\bnpm\s+(?:install|i|add)\b/.test(step.run)) {
+        violations.push(`${stepLabel} must not run ad-hoc 'npm install' (use 'npm ci' and Node >=24.5.0 bundled npm)`);
       }
     }
   }
