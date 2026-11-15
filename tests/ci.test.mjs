@@ -1468,3 +1468,210 @@ test('release.yml routes prereleases to next dist-tag, enforces skip-existing, g
     'dist/py/tol_palettes.py',
   ]);
 });
+
+function buildReleaseFixture({
+  workflowEnv = '',
+  jobPermissions = '      contents: read\n      id-token: write\n',
+  jobEnvironment = '    environment:\n      name: npm\n      url: https://www.npmjs.com/package/@kidthales/tol-palettes\n',
+  jobEnv = '',
+  includeSetupNode = true,
+  nodeVersion = 24,
+  stepEnv = '',
+  publishRun = 'npm publish --tag latest --provenance --access public',
+} = {}) {
+  const setupNodeBlock = includeSetupNode
+    ? `      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${nodeVersion}
+          package-manager-cache: false
+`
+    : '';
+
+  return `name: Release
+permissions:
+  contents: read
+concurrency:
+  group: release-\${{ github.repository }}
+  cancel-in-progress: false
+${workflowEnv}jobs:
+  tag-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Verify release tag matches project metadata versions
+        run: exit 1
+  verify:
+    needs: [tag-guard]
+    uses: ./.github/workflows/ci.yml
+  publish-npm:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+${jobPermissions}${jobEnvironment}${jobEnv}    steps:
+${setupNodeBlock}      - name: Publish to npm (Idempotent with Provenance)
+${stepEnv}        run: |
+          ${publishRun}
+`;
+}
+
+test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive and negative)', () => {
+  withTempFixture({ 'release.yml': buildReleaseFixture() }, (dir) => {
+    const res = auditWorkflows(dir);
+    assert.equal(res.ok, true, `Expected valid OIDC publish-npm fixture to pass, got: ${res.violations.join('; ')}`);
+    assert.equal(res.violations.length, 0);
+  });
+
+  const negativeCases = [
+    {
+      name: 'missing id-token: write permission',
+      opts: { jobPermissions: '      contents: read\n' },
+      expected: 'permissions.id-token: write',
+    },
+    {
+      name: 'missing environment block',
+      opts: { jobEnvironment: '' },
+      expected: "must declare environment 'npm'",
+    },
+    {
+      name: 'non-npm environment name',
+      opts: { jobEnvironment: '    environment:\n      name: staging\n' },
+      expected: "must declare environment 'npm'",
+    },
+    {
+      name: 'wrong setup-node node-version (22 instead of 24)',
+      opts: { nodeVersion: 22 },
+      expected: 'must set node-version: 24',
+    },
+    {
+      name: 'missing actions/setup-node step',
+      opts: { includeSetupNode: false },
+      expected: 'must include actions/setup-node with node-version: 24',
+    },
+    {
+      name: 'step-level NODE_AUTH_TOKEN env binding',
+      opts: { stepEnv: '        env:\n          NODE_AUTH_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NODE_AUTH_TOKEN'",
+    },
+    {
+      name: 'job-level NPM_TOKEN env binding',
+      opts: { jobEnv: '    env:\n      NPM_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_TOKEN'",
+    },
+    {
+      name: 'workflow-level NPM_TOKEN env binding',
+      opts: { workflowEnv: 'env:\n  NPM_TOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_TOKEN'",
+    },
+    {
+      name: 'inline run script NODE_AUTH_TOKEN assignment',
+      opts: { publishRun: 'NODE_AUTH_TOKEN="" npm publish --provenance --access public' },
+      expected: 'must not assign NODE_AUTH_TOKEN or NPM_TOKEN',
+    },
+  ];
+
+  for (const tc of negativeCases) {
+    withTempFixture({ 'release.yml': buildReleaseFixture(tc.opts) }, (dir) => {
+      const res = auditWorkflows(dir);
+      assert.equal(res.ok, false, `Expected negative case "${tc.name}" to fail Gate 0`);
+      assert.ok(
+        res.violations.some((v) => v.includes(tc.expected)),
+        `Expected "${tc.name}" violation to include "${tc.expected}", got: ${res.violations.join('; ')}`,
+      );
+    });
+  }
+});
+
+test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-closed npm >= 11.5.1 guard', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+
+  assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NODE_AUTH_TOKEN'), false);
+  assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NPM_TOKEN'), false);
+
+  const pubNpm = releaseDoc?.jobs?.['publish-npm'];
+  assert.ok(pubNpm, 'Expected publish-npm job in release.yml');
+  assert.equal(pubNpm.permissions?.contents, 'read');
+  assert.equal(pubNpm.permissions?.['id-token'], 'write');
+  assert.deepEqual(pubNpm.environment, {
+    name: 'npm',
+    url: 'https://www.npmjs.com/package/@kidthales/tol-palettes',
+  });
+  assert.equal(Object.hasOwn(pubNpm.env || {}, 'NODE_AUTH_TOKEN'), false);
+  assert.equal(Object.hasOwn(pubNpm.env || {}, 'NPM_TOKEN'), false);
+
+  const steps = pubNpm.steps || [];
+  const setupNode = steps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node@'));
+  assert.ok(setupNode, 'Expected actions/setup-node step in publish-npm');
+  assert.equal(setupNode.with?.['node-version'], 24);
+  assert.equal(setupNode.with?.['registry-url'], 'https://registry.npmjs.org');
+  assert.equal(setupNode.with?.['package-manager-cache'], false);
+
+  for (const step of steps) {
+    assert.equal(Object.hasOwn(step.env || {}, 'NODE_AUTH_TOKEN'), false);
+    assert.equal(Object.hasOwn(step.env || {}, 'NPM_TOKEN'), false);
+    if (typeof step.run === 'string') {
+      assert.equal(/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run), false);
+    }
+  }
+
+  const pubStep = steps.find((s) => s.name === 'Publish to npm (Idempotent with Provenance)');
+  assert.ok(pubStep, 'Expected Publish to npm (Idempotent with Provenance) step');
+  assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG" --provenance --access public/);
+
+  const guardMatch = pubStep.run.match(/if ! node -e '([^']+)' "\$NPM_VER"; then/);
+  assert.ok(guardMatch, 'Expected fail-closed inline node -e npm >= 11.5.1 guard in publish-npm');
+  const guardScript = guardMatch[1];
+
+  for (const validVer of ['11.5.1', '11.5.2', '11.6.0', '12.0.0']) {
+    const res = spawnSync(process.execPath, ['-e', guardScript, validVer], { encoding: 'utf8' });
+    assert.equal(res.status, 0, `Expected npm version ${validVer} to pass OIDC version guard`);
+  }
+  for (const invalidVer of ['11.5.0', '11.4.9', '10.9.2', '0.0.0', 'not-a-semver']) {
+    const res = spawnSync(process.execPath, ['-e', guardScript, invalidVer], { encoding: 'utf8' });
+    assert.notEqual(res.status, 0, `Expected npm version ${invalidVer} to fail OIDC version guard`);
+  }
+});
+
+test('.github/zizmor.yml scopes use-trusted-publishing to publish-gpr npm publish line without drift and scopes self-repository to bare workflow filenames', () => {
+  const zizmorPath = join(root, '.github', 'zizmor.yml');
+  assert.equal(existsSync(zizmorPath), true, 'Expected .github/zizmor.yml to exist');
+
+  const zizmorDoc = parseYaml(readFileSync(zizmorPath, 'utf8'));
+  const trustedIgnore = zizmorDoc?.rules?.['use-trusted-publishing']?.ignore;
+  assert.ok(Array.isArray(trustedIgnore), 'Expected rules.use-trusted-publishing.ignore array in .github/zizmor.yml');
+  assert.equal(trustedIgnore.length, 1, 'Expected use-trusted-publishing ignore to pin strictly 1 line in release.yml');
+
+  const linePinMatch = String(trustedIgnore[0]).match(/^release\.yml:(\d+)$/);
+  assert.ok(linePinMatch, `Expected release.yml:<line> entry, got: ${trustedIgnore[0]}`);
+  const pinnedLineNum = Number(linePinMatch[1]);
+
+  const releaseText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.equal(releaseText.includes('# zizmor: ignore'), false, 'release.yml must not contain inline # zizmor: ignore comments');
+
+  const releaseLines = releaseText.split(/\r?\n/);
+  assert.ok(pinnedLineNum >= 1 && pinnedLineNum <= releaseLines.length, `Pinned line ${pinnedLineNum} out of range`);
+
+  const publishGprStart = releaseLines.findIndex((l) => /^\s{2}publish-gpr:\s*$/.test(l)) + 1;
+  const publishPypiStart = releaseLines.findIndex((l) => /^\s{2}publish-pypi:\s*$/.test(l)) + 1;
+  assert.ok(publishGprStart > 0 && publishPypiStart > publishGprStart, 'Expected publish-gpr before publish-pypi in release.yml');
+  assert.ok(
+    pinnedLineNum > publishGprStart && pinnedLineNum < publishPypiStart,
+    `Expected zizmor ignore line ${pinnedLineNum} to fall within publish-gpr (${publishGprStart}..${publishPypiStart})`,
+  );
+
+  const targetLine = releaseLines[pinnedLineNum - 1].trim();
+  assert.match(
+    targetLine,
+    /^npm publish\b.*--registry=https:\/\/npm\.pkg\.github\.com\/$/,
+    `Expected release.yml:${pinnedLineNum} to be publish-gpr's npm publish command, got: ${targetLine}`,
+  );
+
+  const selfRepoIgnore = zizmorDoc?.rules?.['self-repository']?.ignore;
+  assert.deepEqual(selfRepoIgnore, ['pages.yml', 'release.yml']);
+  for (const wfFile of selfRepoIgnore) {
+    assert.equal(existsSync(join(root, '.github', 'workflows', wfFile)), true, `Expected ${wfFile} to exist`);
+  }
+});
