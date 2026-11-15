@@ -1125,7 +1125,28 @@ jobs:
   verify:
     needs: [tag-guard]
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: \${{ needs.tag-guard.outputs.sha }}
+  publish-npm:
+    needs: [tag-guard, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@kidthales/tol-palettes
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Publish to npm (Idempotent with Provenance)
+        run: npm publish --tag latest --provenance --access public
   attach-assets:
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1280,18 +1301,35 @@ test('ci.yml spans Python 3.11-3.14 across 4 matrix legs, forwards optional work
   assert.match(reqs, /^matplotlib==3\.11\.2\s*$/m, 'Expected matplotlib==3.11.2 pin in requirements-ci.txt');
 });
 
-test('release.yml locks all actions/checkout steps and verify workflow_call to target tag ref, and resolves notify tag + SHA', () => {
+test('release.yml locks tag-guard checkout to target tag ref, pins verify and all downstream jobs to verified SHA, and resolves notify tag + SHA', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
-  const expectedRef =
+  const expectedTagRef =
     "${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}";
-  const expectedJobsWithCheckout = ['tag-guard', 'publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
+  const expectedVerifiedShaRef = '${{ needs.tag-guard.outputs.sha }}';
 
-  let checkoutCount = 0;
-  for (const jobId of expectedJobsWithCheckout) {
-    const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
+  const tagGuardCheckout = (releaseDoc?.jobs?.['tag-guard']?.steps || []).filter(
+    (s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'),
+  );
+  assert.equal(tagGuardCheckout.length, 1, 'Expected 1 actions/checkout step in tag-guard');
+  assert.equal(tagGuardCheckout[0].with?.ref, expectedTagRef, 'Expected tag-locked checkout ref in tag-guard');
+  assert.equal(tagGuardCheckout[0].with?.['persist-credentials'], false, 'Expected persist-credentials: false in tag-guard');
+
+  const downstreamJobsWithCheckout = ['publish-npm', 'publish-gpr', 'publish-pypi', 'attach-assets'];
+  let checkoutCount = tagGuardCheckout.length;
+  for (const jobId of downstreamJobsWithCheckout) {
+    const job = releaseDoc?.jobs?.[jobId];
+    const needs = Array.isArray(job?.needs) ? job.needs : [job?.needs];
+    assert.ok(needs.includes('tag-guard'), `Expected ${jobId} to declare tag-guard in needs`);
+    assert.ok(needs.includes('verify'), `Expected ${jobId} to declare verify in needs`);
+
+    const steps = job?.steps || [];
     const checkoutSteps = steps.filter((s) => typeof s.uses === 'string' && s.uses.startsWith('actions/checkout@'));
     assert.equal(checkoutSteps.length, 1, `Expected 1 actions/checkout step in ${jobId}`);
-    assert.equal(checkoutSteps[0].with?.ref, expectedRef, `Expected tag-locked checkout ref in ${jobId}`);
+    assert.equal(
+      checkoutSteps[0].with?.ref,
+      expectedVerifiedShaRef,
+      `Expected verified-SHA checkout ref in ${jobId} (no tag re-resolution)`,
+    );
     assert.equal(checkoutSteps[0].with?.['persist-credentials'], false, `Expected persist-credentials: false in ${jobId}`);
     checkoutCount += checkoutSteps.length;
   }
@@ -1299,11 +1337,11 @@ test('release.yml locks all actions/checkout steps and verify workflow_call to t
 
   assert.equal(releaseDoc?.jobs?.verify?.uses, './.github/workflows/ci.yml');
   const verifyRef = releaseDoc?.jobs?.verify?.with?.ref;
-  assert.equal(verifyRef, expectedRef, 'Expected release.yml verify job to forward target ref to ci.yml');
-  assert.ok(
-    verifyRef.includes("format('refs/tags/{0}', github.event.release.tag_name)") &&
-      verifyRef.includes("format('refs/tags/{0}', inputs.tag)"),
-    'Expected release.yml verify.with.ref to qualify release.tag_name and inputs.tag with refs/tags/',
+  assert.equal(verifyRef, expectedVerifiedShaRef, 'Expected release.yml verify job to forward verified SHA ref to ci.yml');
+  assert.equal(
+    verifyRef.includes('refs/tags/') || verifyRef.includes('tag_name') || verifyRef.includes('inputs.tag'),
+    false,
+    'verify.with.ref must not re-resolve tags',
   );
 
   const pagesDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'pages.yml'), 'utf8'));
@@ -1420,8 +1458,9 @@ test('release.yml tag-guard regex accepts valid SemVer/prerelease tags, rejects 
   );
 });
 
-test('release.yml routes prereleases to next dist-tag, enforces skip-existing, git clean guard, and 10-asset attestation before upload', () => {
-  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+test('release.yml routes prereleases to next dist-tag, verifies PyPI digests, enforces git clean guard, and attests 100% of uploaded release assets', () => {
+  const releaseYmlText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  const releaseDoc = parseYaml(releaseYmlText);
 
   for (const jobId of ['publish-npm', 'publish-gpr']) {
     const steps = releaseDoc?.jobs?.[jobId]?.steps || [];
@@ -1433,9 +1472,18 @@ test('release.yml routes prereleases to next dist-tag, enforces skip-existing, g
   }
 
   const pypiSteps = releaseDoc?.jobs?.['publish-pypi']?.steps || [];
+  const pypiPreCheck = pypiSteps.find((s) => s.name === 'Check existing PyPI release');
+  assert.ok(pypiPreCheck, 'Expected Check existing PyPI release step in publish-pypi');
+  assert.match(pypiPreCheck.run || '', /::warning ::/);
+
   const pypiPublish = pypiSteps.find((s) => typeof s.uses === 'string' && s.uses.startsWith('pypa/gh-action-pypi-publish@'));
   assert.ok(pypiPublish, 'Expected pypa/gh-action-pypi-publish step in publish-pypi');
   assert.equal(pypiPublish.with?.['skip-existing'], true);
+
+  const pypiVerify = pypiSteps.find((s) => s.name === 'Verify PyPI published digests');
+  assert.ok(pypiVerify, 'Expected Verify PyPI published digests post-publish step in publish-pypi');
+  assert.match(pypiVerify.run || '', /hashlib\.sha256/);
+  assert.match(pypiVerify.run || '', /sys\.exit\(1\)/);
 
   const attachSteps = releaseDoc?.jobs?.['attach-assets']?.steps || [];
   const genIdx = attachSteps.findIndex((s) => s.name === 'Generate game assets and package zip bundles');
@@ -1466,11 +1514,38 @@ test('release.yml routes prereleases to next dist-tag, enforces skip-existing, g
     'dist/js/index.js',
     'dist/json/schemes.json',
     'dist/py/tol_palettes.py',
+    'LICENSE',
+    'NOTICE',
   ]);
+
+  const uploadMatch = releaseYmlText.match(/gh release upload [^\n]+\n([\s\S]*?)--clobber/);
+  assert.ok(uploadMatch, 'Expected gh release upload block in release.yml');
+  const uploadedFiles = uploadMatch[1]
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/\\$/, '').trim())
+    .filter(Boolean);
+  assert.equal(uploadedFiles.length, 12, 'Expected 12 uploaded release assets');
+
+  const attestedSet = new Set();
+  for (const subj of subjectLines) {
+    if (subj === 'dist/assets/*.zip') {
+      for (const z of readdirSync(join(root, 'dist', 'assets')).filter((f) => f.endsWith('.zip'))) {
+        attestedSet.add(`dist/assets/${z}`);
+      }
+    } else {
+      attestedSet.add(subj);
+    }
+  }
+  for (const uploaded of uploadedFiles) {
+    assert.ok(attestedSet.has(uploaded), `Uploaded release asset "${uploaded}" is not covered by actions/attest subject-path`);
+  }
 });
 
 function buildReleaseFixture({
   workflowEnv = '',
+  verifyRef = '${{ needs.tag-guard.outputs.sha }}',
+  omitPublishNpm = false,
+  publishCheckoutRef = null,
   jobPermissions = '      contents: read\n      id-token: write\n',
   jobEnvironment = '    environment:\n      name: npm\n      url: https://www.npmjs.com/package/@kidthales/tol-palettes\n',
   jobEnv = '',
@@ -1479,6 +1554,14 @@ function buildReleaseFixture({
   stepEnv = '',
   publishRun = 'npm publish --tag latest --provenance --access public',
 } = {}) {
+  const checkoutBlock = publishCheckoutRef
+    ? `      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${publishCheckoutRef}
+          persist-credentials: false
+`
+    : '';
   const setupNodeBlock = includeSetupNode
     ? `      - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -1487,6 +1570,23 @@ function buildReleaseFixture({
           package-manager-cache: false
 `
     : '';
+  const verifyWithBlock = verifyRef
+    ? `    with:
+      ref: ${verifyRef}
+`
+    : '';
+  const publishNpmBlock = omitPublishNpm
+    ? ''
+    : `  publish-npm:
+    needs: [tag-guard, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+${jobPermissions}${jobEnvironment}${jobEnv}    steps:
+${checkoutBlock}${setupNodeBlock}      - name: Publish to npm (Idempotent with Provenance)
+${stepEnv}        run: |
+          ${publishRun}
+`;
 
   return `name: Release
 permissions:
@@ -1506,16 +1606,7 @@ ${workflowEnv}jobs:
   verify:
     needs: [tag-guard]
     uses: ./.github/workflows/ci.yml
-  publish-npm:
-    needs: [verify]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-${jobPermissions}${jobEnvironment}${jobEnv}    steps:
-${setupNodeBlock}      - name: Publish to npm (Idempotent with Provenance)
-${stepEnv}        run: |
-          ${publishRun}
-`;
+${verifyWithBlock}${publishNpmBlock}`;
 }
 
 test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive and negative)', () => {
@@ -1527,9 +1618,29 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
 
   const negativeCases = [
     {
+      name: 'missing publish-npm job',
+      opts: { omitPublishNpm: true },
+      expected: "missing 'publish-npm' job",
+    },
+    {
+      name: 'verify.with.ref not pinned to verified SHA',
+      opts: { verifyRef: "refs/tags/${{ inputs.tag }}" },
+      expected: 'verify job must pass verified SHA ref',
+    },
+    {
+      name: 'downstream checkout re-resolves tag instead of verified SHA',
+      opts: { publishCheckoutRef: "refs/tags/${{ inputs.tag }}" },
+      expected: 'must check out verified SHA ref',
+    },
+    {
       name: 'missing id-token: write permission',
       opts: { jobPermissions: '      contents: read\n' },
-      expected: 'permissions.id-token: write',
+      expected: 'exact permissions { contents: read, id-token: write }',
+    },
+    {
+      name: 'extra contents: write permission on publish-npm',
+      opts: { jobPermissions: '      contents: write\n      id-token: write\n' },
+      expected: 'exact permissions { contents: read, id-token: write }',
     },
     {
       name: 'missing environment block',
@@ -1569,7 +1680,12 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
     {
       name: 'inline run script NODE_AUTH_TOKEN assignment',
       opts: { publishRun: 'NODE_AUTH_TOKEN="" npm publish --provenance --access public' },
-      expected: 'must not assign NODE_AUTH_TOKEN or NPM_TOKEN',
+      expected: 'must not reference NODE_AUTH_TOKEN or NPM_TOKEN',
+    },
+    {
+      name: 'inline run script NODE_AUTH_TOKEN via GITHUB_ENV',
+      opts: { publishRun: 'echo "NODE_AUTH_TOKEN=tok" >> "$GITHUB_ENV"\n          npm publish --provenance --access public' },
+      expected: 'must not reference NODE_AUTH_TOKEN or NPM_TOKEN',
     },
     {
       name: 'step-level NPM_CONFIG__AUTHTOKEN env binding',
@@ -1584,17 +1700,27 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
     {
       name: 'inline run script NPM_CONFIG__AUTHTOKEN assignment',
       opts: { publishRun: 'NPM_CONFIG__AUTHTOKEN="tok" npm publish --provenance --access public' },
-      expected: 'must not assign NPM_CONFIG__AUTHTOKEN',
+      expected: 'must not reference NPM_CONFIG__AUTHTOKEN',
     },
     {
       name: 'inline run script --_authToken= CLI flag',
       opts: { publishRun: 'npm publish --_authToken="tok" --provenance --access public' },
-      expected: 'must not pass --_authToken CLI flag',
+      expected: 'must not reference _authToken',
     },
     {
       name: 'inline run script registry-scoped --_authToken= CLI flag',
       opts: { publishRun: 'npm publish --//registry.npmjs.org/:_authToken="tok" --provenance --access public' },
-      expected: 'must not pass --_authToken CLI flag',
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script npm config set _authToken',
+      opts: { publishRun: 'npm config set //registry.npmjs.org/:_authToken tok\n          npm publish --provenance --access public' },
+      expected: 'must not reference _authToken',
+    },
+    {
+      name: 'inline run script .npmrc _authToken append',
+      opts: { publishRun: 'echo "//registry.npmjs.org/:_authToken=tok" >> .npmrc\n          npm publish --provenance --access public' },
+      expected: 'must not reference _authToken',
     },
   ];
 
@@ -1610,7 +1736,7 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
   }
 });
 
-test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-closed npm >= 11.5.1 guard', () => {
+test('release.yml publish-npm uses tokenless OIDC trusted publishing and self-healing fail-closed npm >= 11.5.1 guard', () => {
   const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
 
   assert.equal(Object.hasOwn(releaseDoc?.env || {}, 'NODE_AUTH_TOKEN'), false);
@@ -1618,8 +1744,7 @@ test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-cl
 
   const pubNpm = releaseDoc?.jobs?.['publish-npm'];
   assert.ok(pubNpm, 'Expected publish-npm job in release.yml');
-  assert.equal(pubNpm.permissions?.contents, 'read');
-  assert.equal(pubNpm.permissions?.['id-token'], 'write');
+  assert.deepEqual(pubNpm.permissions, { contents: 'read', 'id-token': 'write' });
   assert.deepEqual(pubNpm.environment, {
     name: 'npm',
     url: 'https://www.npmjs.com/package/@kidthales/tol-palettes',
@@ -1639,15 +1764,17 @@ test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-cl
     assert.equal(Object.hasOwn(step.env || {}, 'NPM_TOKEN'), false);
     if (typeof step.run === 'string') {
       assert.equal(/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run), false);
+      assert.equal(/_authToken/i.test(step.run), false);
     }
   }
 
   const pubStep = steps.find((s) => s.name === 'Publish to npm (Idempotent with Provenance)');
   assert.ok(pubStep, 'Expected Publish to npm (Idempotent with Provenance) step');
+  assert.match(pubStep.run, /npm install -g npm@11\.21\.2/);
   assert.match(pubStep.run, /npm publish --tag "\$DIST_TAG" --provenance --access public/);
 
-  const guardMatch = pubStep.run.match(/if ! node -e '([^']+)' "\$NPM_VER"; then/);
-  assert.ok(guardMatch, 'Expected fail-closed inline node -e npm >= 11.5.1 guard in publish-npm');
+  const guardMatch = pubStep.run.match(/is_valid_npm\(\)\s*\{\s*node -e '([^']+)' "\$1"\s*\}/);
+  assert.ok(guardMatch, 'Expected fail-closed inline node -e npm >= 11.5.1 guard in is_valid_npm()');
   const guardScript = guardMatch[1];
 
   for (const validVer of ['11.5.1', '11.5.1+build.1', '11.5.2-rc.0', '11.5.2', '11.6.0', '12.0.0']) {
@@ -1682,16 +1809,17 @@ test('.github/zizmor.yml scopes use-trusted-publishing to publish-gpr npm publis
   const publishGprStart = releaseLines.findIndex((l) => /^\s{2}publish-gpr:\s*$/.test(l)) + 1;
   const publishPypiStart = releaseLines.findIndex((l) => /^\s{2}publish-pypi:\s*$/.test(l)) + 1;
   assert.ok(publishGprStart > 0 && publishPypiStart > publishGprStart, 'Expected publish-gpr before publish-pypi in release.yml');
-  assert.ok(
-    pinnedLineNum > publishGprStart && pinnedLineNum < publishPypiStart,
-    `Expected zizmor ignore line ${pinnedLineNum} to fall within publish-gpr (${publishGprStart}..${publishPypiStart})`,
-  );
 
-  const targetLine = releaseLines[pinnedLineNum - 1].trim();
-  assert.match(
-    targetLine,
-    /^npm publish\b.*--registry=https:\/\/npm\.pkg\.github\.com\/$/,
-    `Expected release.yml:${pinnedLineNum} to be publish-gpr's npm publish command, got: ${targetLine}`,
+  const gprPublishOffset = releaseLines
+    .slice(publishGprStart - 1, publishPypiStart - 1)
+    .findIndex((l) => /^\s*npm publish\b.*--registry=https:\/\/npm\.pkg\.github\.com\/$/.test(l));
+  assert.ok(gprPublishOffset >= 0, 'Expected npm publish --registry=https://npm.pkg.github.com/ inside publish-gpr');
+  const actualGprPublishLine = publishGprStart + gprPublishOffset;
+
+  assert.equal(
+    pinnedLineNum,
+    actualGprPublishLine,
+    `zizmor line pin drifted: .github/zizmor.yml pins release.yml:${pinnedLineNum}, but publish-gpr's npm publish is at release.yml:${actualGprPublishLine}. Update .github/zizmor.yml to release.yml:${actualGprPublishLine}.`,
   );
 
   const selfRepoIgnore = zizmorDoc?.rules?.['self-repository']?.ignore;

@@ -81,6 +81,19 @@ export function resolveRealPath(targetPath, symlinkDepth = 0) {
   return current;
 }
 
+export function isDirectCli(metaUrl, argv1 = process.argv[1]) {
+  if (typeof argv1 !== 'string' || argv1.trim() === '') {
+    return false;
+  }
+  try {
+    const resolvedArgv = normCase(nativeRealpath(resolve(argv1)));
+    const resolvedMeta = normCase(nativeRealpath(fileURLToPath(metaUrl)));
+    return resolvedArgv === resolvedMeta;
+  } catch {
+    return false;
+  }
+}
+
 export function isSameOrSubpath(targetPath, basePath) {
   const rel = relative(normCase(resolveRealPath(basePath)), normCase(resolveRealPath(targetPath)));
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel));

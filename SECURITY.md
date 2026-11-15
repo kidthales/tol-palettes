@@ -65,7 +65,7 @@ npm audit signatures
 
 ### 4. Web Subresource Integrity (SRI)
 
-For web assets loaded from CDNs (e.g. jsDelivr, unpkg), look up the precomputed `sha384` digest in `dist/sri.json` and apply the `integrity` attribute:
+For web assets loaded from CDNs (e.g. jsDelivr, unpkg), look up the precomputed `sha384` digest in `dist/sri.json` and apply the `integrity` attribute (note: `1.0.0-alpha.1` is a pre-release distributed under the npm `@next` tag, not `@latest`; the CDN snippet resolves once published):
 
 ```html
 <link

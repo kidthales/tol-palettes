@@ -1,9 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { auditHostedSchema, auditPackageExports, EXPECTED_SCHEMA_ID } from '../tools/lint.mjs';
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function withTempRoot(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'tol_lint_test_'));
@@ -515,5 +519,57 @@ test('auditPackageExports validates LHS subpath key syntax before auditing RHS t
       }),
       [],
     );
+  });
+});
+
+test('tools/lint.mjs CLI executes (never fails open), rejects corrupted fixtures, and handles case/junction paths', () => {
+  const passRes = spawnSync(process.execPath, ['tools/lint.mjs'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.equal(passRes.status, 0, `Expected tools/lint.mjs to pass on repo root, stderr: ${passRes.stderr}`);
+  assert.match(passRes.stdout, /✔ Lint passed:/, 'Expected tools/lint.mjs CLI to print Lint passed confirmation');
+
+  if (process.platform === 'win32') {
+    const absLint = join(repoRoot, 'tools', 'lint.mjs');
+    const swappedDrive = /^[A-Z]:/.test(absLint)
+      ? absLint[0].toLowerCase() + absLint.slice(1)
+      : absLint[0].toUpperCase() + absLint.slice(1);
+    const caseRes = spawnSync(process.execPath, [swappedDrive], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    assert.equal(caseRes.status, 0, `Expected swapped drive-letter CLI path to pass: ${caseRes.stderr}`);
+    assert.match(caseRes.stdout, /✔ Lint passed:/, 'Expected swapped drive-letter CLI invocation not to fail open');
+  }
+
+  withTempRoot((corruptRoot) => {
+    const failRes = spawnSync(process.execPath, ['tools/lint.mjs', '--root', corruptRoot], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    assert.notEqual(failRes.status, 0, 'Expected tools/lint.mjs CLI to exit non-zero on corrupted fixture');
+    assert.match(failRes.stderr, /✖ Lint failed:/, 'Expected Lint failed diagnostic on stderr');
+  });
+
+  withTempRoot((junctionParent) => {
+    const junctionToolsDir = join(junctionParent, 'tools_link');
+    let linked = false;
+    try {
+      symlinkSync(join(repoRoot, 'tools'), junctionToolsDir, process.platform === 'win32' ? 'junction' : 'dir');
+      linked = true;
+    } catch {
+      // Skip symlink/junction check if environment restricts symlink creation
+    }
+    if (linked) {
+      withTempRoot((corruptRoot) => {
+        const juncRes = spawnSync(process.execPath, [join(junctionToolsDir, 'lint.mjs'), '--root', corruptRoot], {
+          cwd: repoRoot,
+          encoding: 'utf8',
+        });
+        assert.notEqual(juncRes.status, 0, 'Expected junction-invoked tools/lint.mjs to fail closed on corrupted fixture');
+        assert.match(juncRes.stderr, /✖ Lint failed:/, 'Expected junction-invoked lint CLI not to fail open');
+      });
+    }
   });
 });

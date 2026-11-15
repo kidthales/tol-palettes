@@ -11,8 +11,9 @@
 import { execSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDirectCli } from './path-jail.mjs';
 
 const defaultRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -117,8 +118,12 @@ export function pypiClassifierFor(semver) {
 
 /**
  * Executes full version synchronization with atomic rollback on failure.
- * If dist/ rollback encounters any filesystem issue, re-running `npm run generate`
- * fully reconstructs all dist/ assets deterministically.
+ * Rollback snapshots cover the 7 manifest/documentation files (`targetPaths`) and `dist/`.
+ * Because all `npm run generate` sub-commands enforce path confinement to `dist/` via
+ * `tools/path-jail.mjs` (`resolveOutDir`), this covers the generator's full write set; any
+ * future generator writing outside `dist/` must also be added to `targetPaths`.
+ * If `dist/` rollback encounters any filesystem issue, re-running `npm run generate`
+ * fully reconstructs all `dist/` assets deterministically.
  */
 export function syncVersion(semver, options = {}) {
   const rootDir = options.rootDir || defaultRoot;
@@ -222,19 +227,23 @@ export function syncVersion(semver, options = {}) {
   };
 
   try {
-    // 1. Update package.json
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    // 1. Update package.json (preserving EOL)
+    const pkgRaw = readFileSync(pkgPath, 'utf8');
+    const pkgEol = pkgRaw.includes('\r\n') ? '\r\n' : '\n';
+    const pkg = JSON.parse(pkgRaw);
     pkg.version = semver;
-    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    writeFileSync(pkgPath, (JSON.stringify(pkg, null, 2) + '\n').replace(/\n/g, pkgEol));
 
-    // 2. Update package-lock.json if present
+    // 2. Update package-lock.json if present (preserving EOL)
     if (existsSync(lockPath)) {
-      const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+      const lockRaw = readFileSync(lockPath, 'utf8');
+      const lockEol = lockRaw.includes('\r\n') ? '\r\n' : '\n';
+      const lock = JSON.parse(lockRaw);
       lock.version = semver;
       if (lock.packages && lock.packages['']) {
         lock.packages[''].version = semver;
       }
-      writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+      writeFileSync(lockPath, (JSON.stringify(lock, null, 2) + '\n').replace(/\n/g, lockEol));
     }
 
     // 3. Update pyproject.toml
@@ -359,8 +368,7 @@ export function parseCliArgs(args) {
   return { semver: semverArg, date: dateArg };
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-if (isMain) {
+if (isDirectCli(import.meta.url)) {
   try {
     const { semver, date } = parseCliArgs(process.argv.slice(2));
     const result = syncVersion(semver, { date });

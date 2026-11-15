@@ -40,6 +40,6 @@ When published to npm, all CSS files are available via jsDelivr and unpkg:
 <!-- Individual scheme (e.g. bright palette via unpkg) -->
 <link rel="stylesheet" href="https://unpkg.com/@kidthales/tol-palettes/dist/css/bright.css">
 
-<!-- Pinned version -->
+<!-- Pinned pre-release version (uses npm @next channel, not @latest; resolves on CDN once published) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@kidthales/tol-palettes@1.0.0-alpha.1/dist/css/tol.css" integrity="sha384-3g0jAZKNIK2KxgHMBn+Qo9PTuGPS6fX4yKZFuIzuy3MEAzYQmiuGIB4EUFNkZaMb" crossorigin="anonymous">
 ```

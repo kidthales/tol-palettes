@@ -326,5 +326,11 @@ test('documentation SRI digests in docs/css.md, SECURITY.md, and CONTRIBUTING.md
     assert.ok(match, `${docRel} must contain pinned @<version> tol.css link with integrity`);
     assert.equal(match[1], pkg.version, `${docRel} pinned version must match package.json version`);
     assert.equal(match[2], tolCssIntegrity, `${docRel} integrity must match dist/sri.json tol.css integrity`);
+    if (pkg.version.includes('-')) {
+      assert.ok(
+        content.includes('@next'),
+        `${docRel} must document pre-release @next dist-tag requirement when package version (${pkg.version}) is a prerelease`,
+      );
+    }
   }
 });

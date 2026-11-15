@@ -8,7 +8,7 @@ import { copyFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes } from './validate.mjs';
-import { parseCliOutDir, resolveOutDir } from './path-jail.mjs';
+import { isDirectCli, parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { cssFor } from './generate-css.mjs';
 import { hexToRgb } from './generate-js.mjs';
 
@@ -464,7 +464,7 @@ export function generateGallery(opts = {}) {
   return { galleryDir };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isDirectCli(import.meta.url)) {
   const cliOutDir = parseCliOutDir();
   const opts = cliOutDir ? { outDir: cliOutDir } : {};
   generateGallery(opts);

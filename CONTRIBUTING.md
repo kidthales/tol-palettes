@@ -108,7 +108,7 @@ gh attestation verify tol-palettes-godot.zip --owner kidthales
 npm audit signatures
 ```
 
-For web consumers, subresource integrity (SRI) hashes are published in `dist/sri.json`:
+For web consumers, subresource integrity (SRI) hashes are published in `dist/sri.json` (note: `1.0.0-alpha.1` is a pre-release distributed under the npm `@next` tag, not `@latest`; the CDN snippet resolves once published):
 
 ```html
 <link

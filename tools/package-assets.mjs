@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { assertValidMtimeOption, parseCliOutDir, resolveOutDir } from './path-jail.mjs';
+import { assertValidMtimeOption, isDirectCli, parseCliOutDir, resolveOutDir } from './path-jail.mjs';
 import { buildZip, collectDirectoryEntries, resolveDefaultZipMtime } from './zip-util.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -286,7 +286,7 @@ export function packageAllAssets(opts = {}) {
 
 export const packageAssets = packageAllAssets;
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isDirectCli(import.meta.url)) {
   const cliOutDir = parseCliOutDir();
   const opts = cliOutDir ? { outDir: cliOutDir } : {};
   const targetDist = resolveOutDir(opts);

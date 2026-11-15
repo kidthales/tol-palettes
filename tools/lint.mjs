@@ -14,6 +14,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'n
 import { fileURLToPath } from 'node:url';
 import { validateAll } from './validate.mjs';
 import { auditWorkflows } from './check-workflows.mjs';
+import { isDirectCli } from './path-jail.mjs';
 import { semverToPep440, DOC_FILES, DOC_LINK_REGEX } from './sync-version.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -214,85 +215,103 @@ export function auditHostedSchema(targetRoot) {
   return errors;
 }
 
-export function runLint() {
+export function runLint(targetRoot = root) {
   const errors = [];
 
-// 1. JSON Schema + Invariant validation
-const results = validateAll();
-if (results.length !== 22) {
-  errors.push(`Expected 22 scheme files in data/schemes/, found ${results.length}.`);
-}
-for (const r of results) {
-  for (const p of r.problems) {
-    errors.push(`[schema] ${r.file}: ${p}`);
-  }
-}
-
-// 2. Node.js syntax check on all tools/*.mjs and tests/*.mjs
-for (const dirName of ['tools', 'tests']) {
-  const dirPath = join(root, dirName);
-  for (const file of readdirSync(dirPath).filter((f) => f.endsWith('.mjs'))) {
-    const fullPath = join(dirPath, file);
-    try {
-      execFileSync(process.execPath, ['--check', fullPath], { stdio: 'pipe' });
-    } catch (err) {
-      errors.push(`[syntax] ${dirName}/${file}: ${err.stderr?.toString() || err.message}`);
+  // 1. JSON Schema + Invariant validation
+  try {
+    const results = validateAll(targetRoot);
+    if (results.length !== 22) {
+      errors.push(`Expected 22 scheme files in data/schemes/, found ${results.length}.`);
     }
+    for (const r of results) {
+      for (const p of r.problems) {
+        errors.push(`[schema] ${r.file}: ${p}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`[schema] Validation failed: ${err.message}`);
   }
-}
 
-// 3. Attribution header check across dist/ outputs
-const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite', 'gallery', 'json'];
-for (const sub of distCheckDirs) {
-  const subPath = join(root, 'dist', sub);
-  if (!existsSync(subPath)) {
-    errors.push(`[dist] Missing dist/${sub} directory.`);
-    continue;
-  }
-  const files = readdirSync(subPath, { withFileTypes: true })
-    .filter((d) => d.isFile())
-    .map((d) => d.name);
-  if (files.length === 0) {
-    errors.push(`[dist] dist/${sub} is empty.`);
-  }
-  for (const f of files) {
-    if (sub === 'gallery' && f === 'CNAME') {
+  // 2. Node.js syntax check on all tools/*.mjs and tests/*.mjs
+  for (const dirName of ['tools', 'tests']) {
+    const dirPath = join(targetRoot, dirName);
+    if (!existsSync(dirPath)) {
+      errors.push(`[syntax] Missing ${dirName}/ directory.`);
       continue;
     }
-    const content = readFileSync(join(subPath, f), 'utf8');
-    if (!content.includes('Paul Tol') || !content.includes('not affiliated with or endorsed by Paul Tol')) {
-      errors.push(`[attribution] dist/${sub}/${f} is missing the mandatory Paul Tol attribution header.`);
+    for (const file of readdirSync(dirPath).filter((f) => f.endsWith('.mjs'))) {
+      const fullPath = join(dirPath, file);
+      try {
+        execFileSync(process.execPath, ['--check', fullPath], { stdio: 'pipe' });
+      } catch (err) {
+        errors.push(`[syntax] ${dirName}/${file}: ${err.stderr?.toString() || err.message}`);
+      }
     }
   }
-}
 
-// 4. Agent / scratch file leak guard
-try {
-  const tracked = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
-    .split(/\r?\n/)
-    .filter(Boolean);
-  const badPattern = /^(\.agents?\/|\.gemini\/|\.ai\/|\.cursor\/|\.claude\/|scratch\/|docs\/learnings\/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)/;
-  for (const file of tracked) {
-    if (badPattern.test(file)) {
-      errors.push(`[hygiene] Agent or scratch file tracked in git: ${file}`);
+  // 3. Attribution header check across dist/ outputs
+  const distCheckDirs = ['css', 'js', 'py', 'godot', 'gpl', 'aseprite', 'gallery', 'json'];
+  for (const sub of distCheckDirs) {
+    const subPath = join(targetRoot, 'dist', sub);
+    if (!existsSync(subPath)) {
+      errors.push(`[dist] Missing dist/${sub} directory.`);
+      continue;
+    }
+    const files = readdirSync(subPath, { withFileTypes: true })
+      .filter((d) => d.isFile())
+      .map((d) => d.name);
+    if (files.length === 0) {
+      errors.push(`[dist] dist/${sub} is empty.`);
+    }
+    for (const f of files) {
+      if (sub === 'gallery' && f === 'CNAME') {
+        continue;
+      }
+      const content = readFileSync(join(subPath, f), 'utf8');
+      if (!content.includes('Paul Tol') || !content.includes('not affiliated with or endorsed by Paul Tol')) {
+        errors.push(`[attribution] dist/${sub}/${f} is missing the mandatory Paul Tol attribution header.`);
+      }
     }
   }
-} catch {
-  // Ignore if git is unavailable
-}
 
-// 5. Package exports resolution check
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-errors.push(...auditPackageExports(root, pkg));
+  // 4. Agent / scratch file leak guard
+  try {
+    const tracked = execFileSync('git', ['ls-files'], { cwd: targetRoot, encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter(Boolean);
+    const badPattern = /^(\.agents?\/|\.gemini\/|\.ai\/|\.cursor\/|\.claude\/|scratch\/|docs\/learnings\/|AGENTS\.md$|GEMINI\.md$|CLAUDE\.md$)/;
+    for (const file of tracked) {
+      if (badPattern.test(file)) {
+        errors.push(`[hygiene] Agent or scratch file tracked in git: ${file}`);
+      }
+    }
+  } catch {
+    // Ignore if git is unavailable
+  }
 
-// 6. GitHub Actions workflow AST & security audit
-const workflowViolations = auditWorkflows(root);
-for (const v of workflowViolations) {
-  errors.push(`[workflow] ${v}`);
-}
+  // 5. Package exports resolution check
+  let pkg = {};
+  const pkgPath = join(targetRoot, 'package.json');
+  if (!existsSync(pkgPath)) {
+    errors.push('[exports] Missing package.json');
+  } else {
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      errors.push(...auditPackageExports(targetRoot, pkg));
+    } catch (err) {
+      errors.push(`[exports] Failed to parse package.json: ${err.message}`);
+    }
+  }
 
-// 7. Gallery HTML accessibility, anchors, and CSP audit
-const galleryHtmlPath = join(root, 'dist', 'gallery', 'index.html');
+  // 6. GitHub Actions workflow AST & security audit
+  const workflowViolations = auditWorkflows(targetRoot);
+  for (const v of workflowViolations) {
+    errors.push(`[workflow] ${v}`);
+  }
+
+  // 7. Gallery HTML accessibility, anchors, and CSP audit
+  const galleryHtmlPath = join(targetRoot, 'dist', 'gallery', 'index.html');
 if (existsSync(galleryHtmlPath)) {
   const html = readFileSync(galleryHtmlPath, 'utf8');
 
@@ -350,19 +369,23 @@ if (existsSync(galleryHtmlPath)) {
   }
 }
 
-errors.push(...auditHostedSchema(root));
+errors.push(...auditHostedSchema(targetRoot));
 
 // 8. 8-target version parity verification
 let expectedPep440;
-try {
-  expectedPep440 = semverToPep440(pkg.version);
-} catch (err) {
-  errors.push(`[version] package.json version "${pkg.version}" is not valid SemVer: ${err.message}`);
+if (typeof pkg.version !== 'string') {
+  errors.push('[version] package.json missing version field');
+} else {
+  try {
+    expectedPep440 = semverToPep440(pkg.version);
+  } catch (err) {
+    errors.push(`[version] package.json version "${pkg.version}" is not valid SemVer: ${err.message}`);
+  }
 }
 
 if (expectedPep440) {
   // Target 2: package-lock.json
-  const lockPath = join(root, 'package-lock.json');
+  const lockPath = join(targetRoot, 'package-lock.json');
   if (!existsSync(lockPath)) {
     errors.push('[version] Missing package-lock.json');
   } else {
@@ -382,7 +405,7 @@ if (expectedPep440) {
   }
 
   // Target 3: pyproject.toml
-  const pyTomlPath = join(root, 'pyproject.toml');
+  const pyTomlPath = join(targetRoot, 'pyproject.toml');
   if (!existsSync(pyTomlPath)) {
     errors.push('[version] Missing pyproject.toml');
   } else {
@@ -396,7 +419,7 @@ if (expectedPep440) {
   }
 
   // Target 4: CITATION.cff
-  const cffPath = join(root, 'CITATION.cff');
+  const cffPath = join(targetRoot, 'CITATION.cff');
   if (!existsSync(cffPath)) {
     errors.push('[version] Missing CITATION.cff');
   } else {
@@ -410,7 +433,7 @@ if (expectedPep440) {
   }
 
   // Target 5: dist/godot/addons/tol_palettes/plugin.cfg
-  const pluginCfgPath = join(root, 'dist', 'godot', 'addons', 'tol_palettes', 'plugin.cfg');
+  const pluginCfgPath = join(targetRoot, 'dist', 'godot', 'addons', 'tol_palettes', 'plugin.cfg');
   if (!existsSync(pluginCfgPath)) {
     errors.push('[version] Missing dist/godot/addons/tol_palettes/plugin.cfg');
   } else {
@@ -424,7 +447,7 @@ if (expectedPep440) {
   }
 
   // Target 6: dist/py/tol_palettes.py
-  const pyDistPath = join(root, 'dist', 'py', 'tol_palettes.py');
+  const pyDistPath = join(targetRoot, 'dist', 'py', 'tol_palettes.py');
   if (!existsSync(pyDistPath)) {
     errors.push('[version] Missing dist/py/tol_palettes.py');
   } else {
@@ -440,7 +463,7 @@ if (expectedPep440) {
   }
 
   // Target 7: dist/sri.json
-  const sriPath = join(root, 'dist', 'sri.json');
+  const sriPath = join(targetRoot, 'dist', 'sri.json');
   if (!existsSync(sriPath)) {
     errors.push('[version] Missing dist/sri.json');
   } else {
@@ -455,7 +478,7 @@ if (expectedPep440) {
   }
 
   // Target 8: dist/manifest.json
-  const manifestPath = join(root, 'dist', 'manifest.json');
+  const manifestPath = join(targetRoot, 'dist', 'manifest.json');
   if (!existsSync(manifestPath)) {
     errors.push('[version] Missing dist/manifest.json');
   } else {
@@ -471,8 +494,8 @@ if (expectedPep440) {
 }
 
 // 9. SHA256SUMS.txt standalone upload coverage
-const releaseYmlPath = join(root, '.github', 'workflows', 'release.yml');
-const sumsPath = join(root, 'dist', 'SHA256SUMS.txt');
+const releaseYmlPath = join(targetRoot, '.github', 'workflows', 'release.yml');
+const sumsPath = join(targetRoot, 'dist', 'SHA256SUMS.txt');
 
 if (!existsSync(sumsPath)) {
   errors.push('[checksums] Missing dist/SHA256SUMS.txt');
@@ -526,7 +549,7 @@ if (!existsSync(sumsPath)) {
       errors.push(`[checksums] dist/SHA256SUMS.txt contains unexpected asset "${name}" not in release upload list`);
       continue;
     }
-    const fullPath = join(root, relPath);
+    const fullPath = join(targetRoot, relPath);
     if (!existsSync(fullPath)) {
       errors.push(`[checksums] Asset "${name}" (${relPath}) in SHA256SUMS.txt does not exist on disk`);
     } else {
@@ -539,7 +562,7 @@ if (!existsSync(sumsPath)) {
 }
 
 // 10. Documentation SRI digests verification
-const docSriPath = join(root, 'dist', 'sri.json');
+const docSriPath = join(targetRoot, 'dist', 'sri.json');
 let tolCssIntegrity = null;
 if (existsSync(docSriPath)) {
   try {
@@ -553,7 +576,7 @@ if (existsSync(docSriPath)) {
   }
 }
 
-const tolCssFile = join(root, 'dist', 'css', 'tol.css');
+const tolCssFile = join(targetRoot, 'dist', 'css', 'tol.css');
 if (existsSync(tolCssFile) && tolCssIntegrity) {
   const actualHash = 'sha384-' + createHash('sha384').update(readFileSync(tolCssFile)).digest('base64');
   if (actualHash !== tolCssIntegrity) {
@@ -562,7 +585,7 @@ if (existsSync(tolCssFile) && tolCssIntegrity) {
 }
 
 for (const docRel of DOC_FILES) {
-  const docPath = join(root, docRel);
+  const docPath = join(targetRoot, docRel);
   if (!existsSync(docPath)) {
     errors.push(`[doc-sri] Missing documentation file: ${docRel}`);
     continue;
@@ -585,9 +608,31 @@ for (const docRel of DOC_FILES) {
   return errors;
 }
 
-const isDirectCli = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isDirectCli) {
-  const errors = runLint();
+if (isDirectCli(import.meta.url)) {
+  let targetRoot = root;
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--root') {
+      const val = argv[++i];
+      if (!val || val.startsWith('-')) {
+        console.error('✖ Lint failed: --root requires a directory path');
+        process.exit(1);
+      }
+      targetRoot = resolve(val);
+    } else if (arg.startsWith('--root=')) {
+      const val = arg.slice('--root='.length);
+      if (!val) {
+        console.error('✖ Lint failed: --root requires a directory path');
+        process.exit(1);
+      }
+      targetRoot = resolve(val);
+    } else {
+      console.error(`✖ Lint failed: Unknown option "${arg}"`);
+      process.exit(1);
+    }
+  }
+  const errors = runLint(targetRoot);
   if (errors.length > 0) {
     console.error('✖ Lint failed:');
     for (const e of errors) console.error(`  - ${e}`);

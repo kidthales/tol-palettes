@@ -159,7 +159,8 @@ function createFixture(tmpDir, options = {}) {
       : `cff-version: 1.2.0\nversion: 0.1.0\ndate-released: 2026-01-01\n`;
 
   writeFileSync(join(tmpDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
-  writeFileSync(join(tmpDir, 'package-lock.json'), JSON.stringify(lock, null, 2) + '\n');
+  const lockEol = options.lockCrlf ? '\r\n' : '\n';
+  writeFileSync(join(tmpDir, 'package-lock.json'), (JSON.stringify(lock, null, 2) + '\n').replace(/\n/g, lockEol));
   writeFileSync(join(tmpDir, 'pyproject.toml'), pyToml);
   writeFileSync(join(tmpDir, 'CITATION.cff'), cff);
 
@@ -227,8 +228,10 @@ test('syncVersion rewrites manifests and docs with runGenerate: false and preser
     const pkg = JSON.parse(readFileSync(join(tmpDir, 'package.json'), 'utf8'));
     assert.equal(pkg.version, '1.0.0-rc.1');
 
-    // 2. package-lock.json
-    const lock = JSON.parse(readFileSync(join(tmpDir, 'package-lock.json'), 'utf8'));
+    // 2. package-lock.json (LF preserved)
+    const lockRaw = readFileSync(join(tmpDir, 'package-lock.json'), 'utf8');
+    assert.ok(!lockRaw.includes('\r\n'), 'package-lock.json must preserve LF line endings');
+    const lock = JSON.parse(lockRaw);
     assert.equal(lock.version, '1.0.0-rc.1');
     assert.equal(lock.packages[''].version, '1.0.0-rc.1');
 
@@ -258,6 +261,21 @@ test('syncVersion rewrites manifests and docs with runGenerate: false and preser
     assert.ok(!contrib.includes('\r\n'), 'CONTRIBUTING.md must preserve LF line endings');
     assert.match(contrib, /@kidthales\/tol-palettes@1\.0\.0-rc\.1\/dist\/css\/tol\.css/);
     assert.match(contrib, /sha384-dummy-sri-hash-value-1234567890/);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('syncVersion preserves CRLF line endings in package-lock.json when originally CRLF', () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sync-ver-lock-eol-'));
+  try {
+    createFixture(tmpDir, { lockCrlf: true });
+    syncVersion('1.0.0-alpha.2', { rootDir: tmpDir, runGenerate: false, date: '2026-11-14' });
+    const lockRaw = readFileSync(join(tmpDir, 'package-lock.json'), 'utf8');
+    assert.ok(lockRaw.includes('\r\n'), 'package-lock.json must preserve CRLF line endings');
+    const lock = JSON.parse(lockRaw);
+    assert.equal(lock.version, '1.0.0-alpha.2');
+    assert.equal(lock.packages[''].version, '1.0.0-alpha.2');
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

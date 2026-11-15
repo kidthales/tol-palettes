@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { isDirectCli } from './path-jail.mjs';
 
 export const DEFAULT_MAX_TIMEOUT_MINUTES = 30;
 
@@ -31,6 +32,8 @@ export const EXACT_STEP_ALLOWLIST = new Set([
   'publish-gpr/Publish to GitHub Packages (Idempotent)',
   'publish-pypi/Install build tool',
   'publish-pypi/Build sdist and wheel',
+  'publish-pypi/Check existing PyPI release',
+  'publish-pypi/Verify PyPI published digests',
   'attach-assets/Install dependencies',
   'attach-assets/Generate game assets and package zip bundles',
   'attach-assets/package:assets',
@@ -69,8 +72,18 @@ function checkForbiddenEnvBindings(envObj, forbiddenKeys, contextLabel, violatio
 
 function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
   const perms = pubNpm.permissions;
-  if (!perms || typeof perms !== 'object' || perms['id-token'] !== 'write') {
-    violations.push(`${wfName}: publish-npm job must declare permissions.id-token: write for OIDC Trusted Publishing`);
+  const permKeys = perms && typeof perms === 'object' && !Array.isArray(perms) ? Object.keys(perms) : [];
+  if (
+    !perms ||
+    typeof perms !== 'object' ||
+    Array.isArray(perms) ||
+    permKeys.length !== 2 ||
+    perms.contents !== 'read' ||
+    perms['id-token'] !== 'write'
+  ) {
+    violations.push(
+      `${wfName}: publish-npm job must declare exact permissions { contents: read, id-token: write } for OIDC Trusted Publishing`,
+    );
   }
 
   const envName = typeof pubNpm.environment === 'string' ? pubNpm.environment : pubNpm.environment?.name;
@@ -100,14 +113,14 @@ function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
     const stepLabel = `${wfName}: publish-npm step '${step.name || 'unnamed'}'`;
     checkForbiddenEnvBindings(step.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, stepLabel, violations);
     if (typeof step.run === 'string') {
-      if (/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\s*=/.test(step.run)) {
-        violations.push(`${stepLabel} must not assign NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
+      if (/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/.test(step.run)) {
+        violations.push(`${stepLabel} must not reference NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
       }
-      if (/\bNPM_CONFIG_(?:[A-Z0-9_]*_)?_AUTHTOKEN\s*=/i.test(step.run)) {
-        violations.push(`${stepLabel} must not assign NPM_CONFIG__AUTHTOKEN in run script`);
+      if (/\bNPM_CONFIG_(?:[A-Z0-9_]*_)?_AUTHTOKEN\b/i.test(step.run)) {
+        violations.push(`${stepLabel} must not reference NPM_CONFIG__AUTHTOKEN in run script`);
       }
-      if (/(?:^|[\s;|&('"])--(?:[^\s=]*:)?_authToken(?:\s*=|\s|$)/i.test(step.run)) {
-        violations.push(`${stepLabel} must not pass --_authToken CLI flag in run script`);
+      if (/_authToken/i.test(step.run)) {
+        violations.push(`${stepLabel} must not reference _authToken in run script (CLI flags, npm config, or .npmrc writes forbidden)`);
       }
     }
   }
@@ -466,9 +479,12 @@ export function auditWorkflows(targetPath, options = {}) {
         if (jobs.verify.uses !== './.github/workflows/ci.yml') {
           violations.push(`${wfName}: verify job must delegate to './.github/workflows/ci.yml' (got '${jobs.verify.uses || ''}')`);
         }
+        if (jobs.verify.with?.ref !== '${{ needs.tag-guard.outputs.sha }}') {
+          violations.push(`${wfName}: verify job must pass verified SHA ref '\${{ needs.tag-guard.outputs.sha }}' to ci.yml`);
+        }
       }
 
-      // release.yml: package-manager-cache: false across all setup-node steps
+      // release.yml: package-manager-cache: false across all setup-node steps & verified-SHA checkout in downstream jobs
       for (const [jobId, job] of Object.entries(jobs)) {
         for (const step of Array.isArray(job.steps) ? job.steps : []) {
           if (step.uses && step.uses.startsWith('actions/setup-node@')) {
@@ -476,11 +492,20 @@ export function auditWorkflows(targetPath, options = {}) {
               violations.push(`${wfName}: job '${jobId}' step '${step.name || 'setup-node'}' must set package-manager-cache: false`);
             }
           }
+          if (jobId !== 'tag-guard' && step.uses && step.uses.startsWith('actions/checkout@')) {
+            if (step.with?.ref !== '${{ needs.tag-guard.outputs.sha }}') {
+              violations.push(
+                `${wfName}: job '${jobId}' step '${step.name || 'checkout'}' must check out verified SHA ref '\${{ needs.tag-guard.outputs.sha }}'`,
+              );
+            }
+          }
         }
       }
 
-      // release.yml: tokenless OIDC Trusted Publishing contract in publish-npm
-      if (jobs['publish-npm']) {
+      // release.yml: require publish-npm and enforce tokenless OIDC Trusted Publishing contract
+      if (!jobs['publish-npm']) {
+        violations.push(`${wfName}: missing 'publish-npm' job`);
+      } else {
         auditPublishNpmOidcContract(wfName, doc, jobs['publish-npm'], violations);
       }
 
@@ -502,8 +527,7 @@ export function auditWorkflows(targetPath, options = {}) {
 }
 
 // CLI entrypoint
-const isDirectCli = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-if (isDirectCli) {
+if (isDirectCli(import.meta.url)) {
   let targetDir = '';
   for (let i = 2; i < process.argv.length; i++) {
     const arg = process.argv[i];

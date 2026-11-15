@@ -93,11 +93,11 @@ jobs:
       security-events: write
     uses: ./.github/workflows/ci.yml
     with:
-      ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      ref: ${{ needs.tag-guard.outputs.sha }}
 
   publish-npm:
     name: Publish to npm Public Registry
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -110,7 +110,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -125,8 +125,16 @@ jobs:
 
       - name: Publish to npm (Idempotent with Provenance)
         run: |
+          is_valid_npm() {
+            node -e 'const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(process.argv[1].trim()); if (!m) process.exit(1); const maj = +m[1], min = +m[2], pat = +m[3], pre = m[4]; if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && (pat < 1 || (pat === 1 && pre !== undefined)))))) process.exit(1);' "$1"
+          }
           NPM_VER=$(npm --version)
-          if ! node -e 'const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(process.argv[1].trim()); if (!m) process.exit(1); const maj = +m[1], min = +m[2], pat = +m[3], pre = m[4]; if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && (pat < 1 || (pat === 1 && pre !== undefined)))))) process.exit(1);' "$NPM_VER"; then
+          if ! is_valid_npm "$NPM_VER"; then
+            echo "::notice ::Bundled npm ($NPM_VER) is older than 11.5.1; upgrading to pinned npm@11.21.2 for OIDC Trusted Publishing..."
+            npm install -g npm@11.21.2
+            NPM_VER=$(npm --version)
+          fi
+          if ! is_valid_npm "$NPM_VER"; then
             echo "::error::npm >= 11.5.1 is required for OIDC Trusted Publishing (found $NPM_VER)."
             exit 1
           fi
@@ -146,7 +154,7 @@ jobs:
 
   publish-gpr:
     name: Publish to GitHub Packages
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -156,7 +164,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -189,7 +197,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -202,7 +210,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Set up Python
@@ -216,15 +224,78 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build --outdir dist_pypi/
 
+      - name: Check existing PyPI release
+        run: |
+          python - <<'EOF'
+          import tomllib, urllib.error, urllib.request
+          with open("pyproject.toml", "rb") as f:
+              proj = tomllib.load(f)["project"]
+          url = f"https://pypi.org/pypi/{proj['name']}/{proj['version']}/json"
+          try:
+              with urllib.request.urlopen(url, timeout=15) as resp:
+                  if resp.status == 200:
+                      print(f"::warning ::Version {proj['version']} of {proj['name']} already exists on PyPI; skip-existing will skip already-published files.")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  print(f"::warning ::Unable to query PyPI pre-publish state ({exc.code}); continuing.")
+          except Exception as exc:
+              print(f"::warning ::Unable to query PyPI pre-publish state ({exc}); continuing.")
+          EOF
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist_pypi/
           skip-existing: true
 
+      - name: Verify PyPI published digests
+        run: |
+          python - <<'EOF'
+          import hashlib, json, pathlib, sys, time, tomllib, urllib.error, urllib.request
+          with open("pyproject.toml", "rb") as f:
+              proj = tomllib.load(f)["project"]
+          local_files = {
+              p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in sorted(pathlib.Path("dist_pypi").iterdir())
+              if p.is_file()
+          }
+          if not local_files:
+              print("::error::No built distributions found in dist_pypi/.")
+              sys.exit(1)
+          url = f"https://pypi.org/pypi/{proj['name']}/{proj['version']}/json"
+          remote_urls = {}
+          for attempt in range(5):
+              try:
+                  with urllib.request.urlopen(url, timeout=15) as resp:
+                      data = json.load(resp)
+                      remote_urls = {u["filename"]: u.get("digests", {}).get("sha256") for u in data.get("urls", [])}
+                      if all(name in remote_urls for name in local_files):
+                          break
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404 or attempt == 4:
+                      print(f"::error::Failed to fetch PyPI release metadata from {url}: HTTP {exc.code}")
+                      sys.exit(1)
+              except Exception as exc:
+                  if attempt == 4:
+                      print(f"::error::Failed to fetch PyPI release metadata from {url}: {exc}")
+                      sys.exit(1)
+              time.sleep(3)
+          mismatches = []
+          for name, local_sha in local_files.items():
+              remote_sha = remote_urls.get(name)
+              if not remote_sha:
+                  mismatches.append(f"missing on PyPI: {name}")
+              elif remote_sha != local_sha:
+                  mismatches.append(f"SHA-256 mismatch for {name}: PyPI={remote_sha}, dist_pypi={local_sha}")
+          if mismatches:
+              print("::error::PyPI digest verification failed: " + "; ".join(mismatches))
+              sys.exit(1)
+          print(f"Verified PyPI SHA-256 digests match dist_pypi/ for {len(local_files)} distribution file(s).")
+          EOF
+
   attach-assets:
     name: Attach Release Asset Bundles
-    needs: [verify]
+    needs: [tag-guard, verify]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
@@ -236,7 +307,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.release.tag_name && format('refs/tags/{0}', github.event.release.tag_name) || inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ needs.tag-guard.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -270,6 +341,8 @@ jobs:
             dist/js/index.js
             dist/json/schemes.json
             dist/py/tol_palettes.py
+            LICENSE
+            NOTICE
           create-storage-record: false
 
       - name: Upload release assets to GitHub Release
