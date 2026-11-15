@@ -5,13 +5,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
 import {
   resolveOutDir,
   resolveRealPath,
   stripWin32DeviceNamespacePrefix,
+  isDirectCli,
   isSameOrSubpath,
   assertValidMtimeOption,
   assertSafeWriteTarget,
@@ -1261,6 +1262,38 @@ test('path-jail: isSameOrSubpath correctly detects subpath relations', () => {
   assert.equal(isSameOrSubpath(tmpdir(), root), false);
 });
 
+test('path-jail: isDirectCli handles matching, invalid, and realpath-error fallback paths', () => {
+  const lintFile = join(root, 'tools', 'lint.mjs');
+  const lintUrl = pathToFileURL(lintFile).href;
+
+  assert.equal(isDirectCli(lintUrl, ''), false);
+  assert.equal(isDirectCli(lintUrl, null), false);
+  assert.equal(isDirectCli('not-a-file-url', lintFile), false);
+  assert.equal(isDirectCli(lintUrl, lintFile), true);
+  assert.equal(isDirectCli(lintUrl, join(root, 'tools', 'validate.mjs')), false);
+
+  const eaccesRealpath = () => {
+    const err = new Error('EACCES: permission denied');
+    err.code = 'EACCES';
+    throw err;
+  };
+  const missingFile = join(root, 'tools', 'nonexistent-cli-entrypoint.mjs');
+  const missingUrl = pathToFileURL(missingFile).href;
+
+  // Realpath failures (EACCES or ENOENT) fall back to comparing unresolved normalized paths
+  assert.equal(isDirectCli(lintUrl, lintFile, eaccesRealpath), true);
+  assert.equal(isDirectCli(missingUrl, missingFile), true);
+  assert.equal(isDirectCli(lintUrl, join(root, 'tools', 'validate.mjs'), eaccesRealpath), false);
+
+  if (process.platform === 'win32') {
+    const swappedDrive = /^[A-Z]:/.test(missingFile)
+      ? missingFile[0].toLowerCase() + missingFile.slice(1)
+      : missingFile[0].toUpperCase() + missingFile.slice(1);
+    assert.equal(isDirectCli(missingUrl, swappedDrive), true);
+    assert.equal(isDirectCli(lintUrl, swappedDrive.replace('nonexistent-cli-entrypoint.mjs', 'lint.mjs'), eaccesRealpath), true);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Regression tests: CI Python matrix, requirements-ci, & release.yml contracts
 // ---------------------------------------------------------------------------
@@ -1472,6 +1505,11 @@ test('release.yml routes prereleases to next dist-tag, verifies PyPI digests, en
   }
 
   const pypiSteps = releaseDoc?.jobs?.['publish-pypi']?.steps || [];
+  const pypiBuild = pypiSteps.find((s) => s.name === 'Build sdist and wheel');
+  assert.ok(pypiBuild, 'Expected Build sdist and wheel step in publish-pypi');
+  assert.match(pypiBuild.run || '', /SOURCE_DATE_EPOCH="\$\(git log -1 --format=%ct\)"/);
+  assert.match(pypiBuild.run || '', /export SOURCE_DATE_EPOCH/);
+
   const pypiPreCheck = pypiSteps.find((s) => s.name === 'Check existing PyPI release');
   assert.ok(pypiPreCheck, 'Expected Check existing PyPI release step in publish-pypi');
   assert.match(pypiPreCheck.run || '', /::warning ::/);
@@ -1529,7 +1567,9 @@ test('release.yml routes prereleases to next dist-tag, verifies PyPI digests, en
   const attestedSet = new Set();
   for (const subj of subjectLines) {
     if (subj === 'dist/assets/*.zip') {
-      for (const z of readdirSync(join(root, 'dist', 'assets')).filter((f) => f.endsWith('.zip'))) {
+      const zipAssets = readdirSync(join(root, 'dist', 'assets')).filter((f) => f.endsWith('.zip'));
+      assert.ok(zipAssets.length > 0, 'Expected at least one .zip asset in dist/assets');
+      for (const z of zipAssets) {
         attestedSet.add(`dist/assets/${z}`);
       }
     } else {
