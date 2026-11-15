@@ -1571,6 +1571,31 @@ test('auditWorkflows enforces publish-npm tokenless OIDC invariants (positive an
       opts: { publishRun: 'NODE_AUTH_TOKEN="" npm publish --provenance --access public' },
       expected: 'must not assign NODE_AUTH_TOKEN or NPM_TOKEN',
     },
+    {
+      name: 'step-level NPM_CONFIG__AUTHTOKEN env binding',
+      opts: { stepEnv: '        env:\n          NPM_CONFIG__AUTHTOKEN: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'NPM_CONFIG__AUTHTOKEN'",
+    },
+    {
+      name: 'step-level lowercase npm_config__authtoken env binding',
+      opts: { stepEnv: '        env:\n          npm_config__authtoken: \${{ secrets.NPM_TOKEN }}\n' },
+      expected: "must not bind forbidden env 'npm_config__authtoken'",
+    },
+    {
+      name: 'inline run script NPM_CONFIG__AUTHTOKEN assignment',
+      opts: { publishRun: 'NPM_CONFIG__AUTHTOKEN="tok" npm publish --provenance --access public' },
+      expected: 'must not assign NPM_CONFIG__AUTHTOKEN',
+    },
+    {
+      name: 'inline run script --_authToken= CLI flag',
+      opts: { publishRun: 'npm publish --_authToken="tok" --provenance --access public' },
+      expected: 'must not pass --_authToken CLI flag',
+    },
+    {
+      name: 'inline run script registry-scoped --_authToken= CLI flag',
+      opts: { publishRun: 'npm publish --//registry.npmjs.org/:_authToken="tok" --provenance --access public' },
+      expected: 'must not pass --_authToken CLI flag',
+    },
   ];
 
   for (const tc of negativeCases) {
@@ -1625,11 +1650,11 @@ test('release.yml publish-npm uses tokenless OIDC trusted publishing and fail-cl
   assert.ok(guardMatch, 'Expected fail-closed inline node -e npm >= 11.5.1 guard in publish-npm');
   const guardScript = guardMatch[1];
 
-  for (const validVer of ['11.5.1', '11.5.2', '11.6.0', '12.0.0']) {
+  for (const validVer of ['11.5.1', '11.5.1+build.1', '11.5.2-rc.0', '11.5.2', '11.6.0', '12.0.0']) {
     const res = spawnSync(process.execPath, ['-e', guardScript, validVer], { encoding: 'utf8' });
     assert.equal(res.status, 0, `Expected npm version ${validVer} to pass OIDC version guard`);
   }
-  for (const invalidVer of ['11.5.0', '11.4.9', '10.9.2', '0.0.0', 'not-a-semver']) {
+  for (const invalidVer of ['11.5.1-rc.0', '11.5.1-0', '11.5.1foo', '11.5.1.0', '11.5.0', '11.4.9', '10.9.2', '0.0.0', 'not-a-semver']) {
     const res = spawnSync(process.execPath, ['-e', guardScript, invalidVer], { encoding: 'utf8' });
     assert.notEqual(res.status, 0, `Expected npm version ${invalidVer} to fail OIDC version guard`);
   }

@@ -55,12 +55,13 @@ export const FORBIDDEN_COMMAND_PATTERNS = [
   { name: 'npm pack', regex: /\bnpm\s+pack\b/ },
 ];
 
-export const FORBIDDEN_NPM_OIDC_ENV_KEYS = ['NODE_AUTH_TOKEN', 'NPM_TOKEN'];
+export const FORBIDDEN_NPM_OIDC_ENV_KEYS = ['NODE_AUTH_TOKEN', 'NPM_TOKEN', 'NPM_CONFIG__AUTHTOKEN'];
 
 function checkForbiddenEnvBindings(envObj, forbiddenKeys, contextLabel, violations) {
   if (!envObj || typeof envObj !== 'object' || Array.isArray(envObj)) return;
-  for (const key of forbiddenKeys) {
-    if (Object.hasOwn(envObj, key)) {
+  const upperForbidden = new Set(forbiddenKeys.map((k) => k.toUpperCase()));
+  for (const key of Object.keys(envObj)) {
+    if (upperForbidden.has(key.toUpperCase()) || /^NPM_CONFIG_.*_AUTHTOKEN$/i.test(key)) {
       violations.push(`${contextLabel} must not bind forbidden env '${key}' (tokenless OIDC required)`);
     }
   }
@@ -98,8 +99,16 @@ function auditPublishNpmOidcContract(wfName, doc, pubNpm, violations) {
     if (!step || typeof step !== 'object') continue;
     const stepLabel = `${wfName}: publish-npm step '${step.name || 'unnamed'}'`;
     checkForbiddenEnvBindings(step.env, FORBIDDEN_NPM_OIDC_ENV_KEYS, stepLabel, violations);
-    if (typeof step.run === 'string' && /\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\s*=/.test(step.run)) {
-      violations.push(`${stepLabel} must not assign NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
+    if (typeof step.run === 'string') {
+      if (/\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\s*=/.test(step.run)) {
+        violations.push(`${stepLabel} must not assign NODE_AUTH_TOKEN or NPM_TOKEN in run script`);
+      }
+      if (/\bNPM_CONFIG_(?:[A-Z0-9_]*_)?_AUTHTOKEN\s*=/i.test(step.run)) {
+        violations.push(`${stepLabel} must not assign NPM_CONFIG__AUTHTOKEN in run script`);
+      }
+      if (/(?:^|[\s;|&('"])--(?:[^\s=]*:)?_authToken(?:\s*=|\s|$)/i.test(step.run)) {
+        violations.push(`${stepLabel} must not pass --_authToken CLI flag in run script`);
+      }
     }
   }
 }
