@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { auditWorkflows, hasUnescapedExpression } from '../tools/check-workflows.mjs';
@@ -1579,6 +1579,153 @@ test('release.yml routes prereleases to next dist-tag, verifies PyPI digests, en
   for (const uploaded of uploadedFiles) {
     assert.ok(attestedSet.has(uploaded), `Uploaded release asset "${uploaded}" is not covered by actions/attest subject-path`);
   }
+});
+
+function spawnPython(args, options) {
+  let res = spawnSync('python3', args, options);
+  const stderr = typeof res.stderr === 'string' ? res.stderr : '';
+  const isMissingOrShim =
+    res.error?.code === 'ENOENT' ||
+    res.status === 9009 ||
+    stderr.includes('Python was not found');
+  if (isMissingOrShim) {
+    res = spawnSync('python', args, options);
+  }
+  return res;
+}
+
+function runPypiDigestVerifier(verifyScript, { distFiles, pypiUrls }) {
+  const wrapper = [
+    'import io, json, os, time, urllib.request',
+    'expected_url = os.environ["TOL_EXPECTED_URL"]',
+    'mock_payload = os.environ["TOL_MOCK_PYPI_JSON"].encode("utf-8")',
+    'def mock_urlopen(url, timeout=15):',
+    '    assert url == expected_url, f"Unexpected PyPI URL: {url} != {expected_url}"',
+    '    return io.BytesIO(mock_payload)',
+    'urllib.request.urlopen = mock_urlopen',
+    'time.sleep = lambda _s: None',
+    'exec(compile(os.environ["TOL_VERIFY_SCRIPT"], "<release.yml:Verify PyPI published digests>", "exec"), {"__name__": "__main__"})',
+  ].join('\n');
+
+  return withTempFixture(
+    {
+      'pyproject.toml': '[project]\nname = "tol-palettes"\nversion = "1.0.0a1"\n',
+    },
+    (dir) => {
+      const distDir = join(dir, 'dist_pypi');
+      mkdirSync(distDir, { recursive: true });
+      for (const [filename, content] of Object.entries(distFiles)) {
+        writeFileSync(join(distDir, filename), content);
+      }
+      return spawnPython(['-c', wrapper], {
+        cwd: dir,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          TOL_VERIFY_SCRIPT: verifyScript,
+          TOL_MOCK_PYPI_JSON: JSON.stringify({ urls: pypiUrls }),
+          TOL_EXPECTED_URL: 'https://pypi.org/pypi/tol-palettes/1.0.0a1/json',
+        },
+      });
+    },
+  );
+}
+
+test('release.yml Verify PyPI published digests ignores .publish.attestation sidecars and fails closed on missing distributions or SHA-256 mismatches', () => {
+  const releaseDoc = parseYaml(readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8'));
+  const pypiSteps = releaseDoc?.jobs?.['publish-pypi']?.steps || [];
+  const pypiVerify = pypiSteps.find((s) => s.name === 'Verify PyPI published digests');
+  assert.ok(pypiVerify, 'Expected Verify PyPI published digests step in publish-pypi');
+
+  const scriptMatch = (pypiVerify.run || '').match(/python - <<'EOF'\r?\n([\s\S]*?)\r?\nEOF/);
+  assert.ok(scriptMatch, 'Expected inline python heredoc in Verify PyPI published digests');
+  const verifyScript = scriptMatch[1];
+
+  const whlName = 'tol_palettes-1.0.0a1-py3-none-any.whl';
+  const sdistName = 'tol_palettes-1.0.0a1.tar.gz';
+  const whlBytes = Buffer.from('wheel-artifact-bytes', 'utf8');
+  const sdistBytes = Buffer.from('sdist-artifact-bytes', 'utf8');
+  const whlSha = createHash('sha256').update(whlBytes).digest('hex');
+  const sdistSha = createHash('sha256').update(sdistBytes).digest('hex');
+  const sidecarBytes = Buffer.from('{"version":1,"attestation":"pep740"}', 'utf8');
+
+  // Positive: .whl + .tar.gz + *.publish.attestation sidecars pass when PyPI digests match (sidecars ignored)
+  const passRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [whlName]: whlBytes,
+      [`${whlName}.publish.attestation`]: sidecarBytes,
+      [sdistName]: sdistBytes,
+      [`${sdistName}.publish.attestation`]: sidecarBytes,
+    },
+    pypiUrls: [
+      { filename: whlName, digests: { sha256: whlSha } },
+      { filename: sdistName, digests: { sha256: sdistSha } },
+    ],
+  });
+  assert.equal(passRes.status, 0, `Expected PyPI digest verifier to pass with sidecars present: ${passRes.stdout}\n${passRes.stderr}`);
+  assert.match(passRes.stdout || '', /Verified PyPI SHA-256 digests match dist_pypi\/ for 2 distribution file\(s\)\./);
+
+  // Negative: missing .whl (even when .whl.publish.attestation sidecar is present) fails closed
+  const missingWhlRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [`${whlName}.publish.attestation`]: sidecarBytes,
+      [sdistName]: sdistBytes,
+      [`${sdistName}.publish.attestation`]: sidecarBytes,
+    },
+    pypiUrls: [{ filename: sdistName, digests: { sha256: sdistSha } }],
+  });
+  assert.equal(missingWhlRes.status, 1, 'Expected missing .whl to exit 1');
+  assert.match(missingWhlRes.stdout || '', /Missing expected built distribution\(s\) in dist_pypi\/: wheel \(\.whl\)/);
+
+  // Negative: missing .tar.gz (even when .tar.gz.publish.attestation sidecar is present) fails closed
+  const missingSdistRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [whlName]: whlBytes,
+      [`${whlName}.publish.attestation`]: sidecarBytes,
+      [`${sdistName}.publish.attestation`]: sidecarBytes,
+    },
+    pypiUrls: [{ filename: whlName, digests: { sha256: whlSha } }],
+  });
+  assert.equal(missingSdistRes.status, 1, 'Expected missing .tar.gz to exit 1');
+  assert.match(missingSdistRes.stdout || '', /Missing expected built distribution\(s\) in dist_pypi\/: sdist \(\.tar\.gz\)/);
+
+  // Negative: empty distribution set (sidecars only) fails closed listing both artifact kinds
+  const missingBothRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [`${whlName}.publish.attestation`]: sidecarBytes,
+      [`${sdistName}.publish.attestation`]: sidecarBytes,
+    },
+    pypiUrls: [],
+  });
+  assert.equal(missingBothRes.status, 1, 'Expected missing both .whl and .tar.gz to exit 1');
+  assert.match(missingBothRes.stdout || '', /wheel \(\.whl\), sdist \(\.tar\.gz\)/);
+
+  // Negative: SHA-256 mismatch fails closed
+  const mismatchRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [whlName]: whlBytes,
+      [`${whlName}.publish.attestation`]: sidecarBytes,
+      [sdistName]: sdistBytes,
+      [`${sdistName}.publish.attestation`]: sidecarBytes,
+    },
+    pypiUrls: [
+      { filename: whlName, digests: { sha256: '0'.repeat(64) } },
+      { filename: sdistName, digests: { sha256: sdistSha } },
+    ],
+  });
+  assert.equal(mismatchRes.status, 1, 'Expected SHA-256 mismatch to exit 1');
+  assert.match(mismatchRes.stdout || '', /PyPI digest verification failed:.*SHA-256 mismatch for tol_palettes-1\.0\.0a1-py3-none-any\.whl/);
+
+  // Negative: distribution present locally but missing from PyPI metadata fails closed
+  const missingRemoteRes = runPypiDigestVerifier(verifyScript, {
+    distFiles: {
+      [whlName]: whlBytes,
+      [sdistName]: sdistBytes,
+    },
+    pypiUrls: [{ filename: whlName, digests: { sha256: whlSha } }],
+  });
+  assert.equal(missingRemoteRes.status, 1, 'Expected missing distribution on PyPI to exit 1');
+  assert.match(missingRemoteRes.stdout || '', /PyPI digest verification failed:.*missing on PyPI: tol_palettes-1\.0\.0a1\.tar\.gz/);
 });
 
 function buildReleaseFixture({
