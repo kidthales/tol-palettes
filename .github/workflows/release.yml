@@ -256,13 +256,21 @@ jobs:
           import hashlib, json, pathlib, sys, time, tomllib, urllib.error, urllib.request
           with open("pyproject.toml", "rb") as f:
               proj = tomllib.load(f)["project"]
+          # Strictly match built distribution artifacts (excludes *.publish.attestation sidecars).
           local_files = {
               p.name: hashlib.sha256(p.read_bytes()).hexdigest()
               for p in sorted(pathlib.Path("dist_pypi").iterdir())
-              if p.is_file()
+              if p.is_file() and p.name.endswith((".whl", ".tar.gz"))
           }
-          if not local_files:
-              print("::error::No built distributions found in dist_pypi/.")
+          has_wheel = any(name.endswith(".whl") for name in local_files)
+          has_sdist = any(name.endswith(".tar.gz") for name in local_files)
+          if not has_wheel or not has_sdist:
+              missing_kinds = [
+                  kind
+                  for kind, present in (("wheel (.whl)", has_wheel), ("sdist (.tar.gz)", has_sdist))
+                  if not present
+              ]
+              print(f"::error::Missing expected built distribution(s) in dist_pypi/: {', '.join(missing_kinds)}.")
               sys.exit(1)
           url = f"https://pypi.org/pypi/{proj['name']}/{proj['version']}/json"
           remote_urls = {}
