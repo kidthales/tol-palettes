@@ -222,21 +222,31 @@ export function discreteColors(schemeOrId, n) {
 export function generateJsModule(schemes = loadSchemes().map((x) => x.data)) {
   const sorted = [...schemes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const constLines = sorted.map(
-    (s) => `export const ${toIdent(s.id)} = ${JSON.stringify(s, null, 2)};`,
+    (s) => `export const ${toIdent(s.id)} = /* @__PURE__ */ freeze(${JSON.stringify(s, null, 2)});`,
   );
   const mapEntries = sorted.map((s) => `  ${JSON.stringify(s.id)}: ${toIdent(s.id)},`);
   const listEntries = sorted.map((s) => `  ${toIdent(s.id)},`);
 
   return `${HEADER}
+function freeze(value) {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const key of Object.keys(value)) {
+    freeze(value[key]);
+  }
+  return Object.freeze(value);
+}
+
 ${constLines.join('\n\n')}
 
-export const schemes = {
+export const schemes = /* @__PURE__ */ freeze({
 ${mapEntries.join('\n')}
-};
+});
 
-export const schemeList = [
+export const schemeList = /* @__PURE__ */ freeze([
 ${listEntries.join('\n')}
-];
+]);
 
 ${JS_HELPERS}`;
 }
