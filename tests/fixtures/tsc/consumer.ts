@@ -3,6 +3,7 @@ import {
   schemeList,
   get,
   getScheme,
+  getNamed,
   hexToRgb,
   rgbToHex,
   interpolate,
@@ -26,6 +27,8 @@ const brightScheme: Scheme = schemes.bright;
 const firstColor: HexColor = brightScheme.colors[0].hex;
 const brightById: Scheme = get('bright');
 const schemeByName: Scheme = getScheme('bright');
+const namedBrightBlue: HexColor = getNamed('bright', 'blue');
+const namedMutedExtra: HexColor = getNamed(schemes.muted, 'pale_grey');
 const interpolated: HexColor = interpolate('sunset', 0.5);
 const sampled: HexColor[] = sample('bright', 5);
 const rainbowStops: HexColor[] = discreteRainbow(10);
@@ -55,6 +58,8 @@ export {
   firstColor,
   brightById,
   schemeByName,
+  namedBrightBlue,
+  namedMutedExtra,
   interpolated,
   sampled,
   rainbowStops,

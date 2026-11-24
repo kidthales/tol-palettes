@@ -118,14 +118,14 @@
       "integrity": "sha384-+BHe87BKQgrFSyiUo5hN90KSiN2DIut2tZJ24b7DRtadqip+8FsECvhVcmpWFmwH"
     },
     "dist/js/index.d.ts": {
-      "bytes": 3626,
-      "gzipBytes": 1041,
-      "integrity": "sha384-aS9dLFtMXlX4Nqgkl7AaJ0l5zxXDNm2dHEC9AwR7NZUdVZJbS0KO7gulIQlPpk/z"
+      "bytes": 3724,
+      "gzipBytes": 1050,
+      "integrity": "sha384-6lTzspJeaWcvFH2QU8ScxIyiXN82th1VZIOvoDnqua7TCeNDD+44zDgNNKXsgK2U"
     },
     "dist/js/index.js": {
-      "bytes": 29590,
-      "gzipBytes": 5132,
-      "integrity": "sha384-LcOr8Wn5P7ZG8rVDGJ6CLg+FfUyGh/86L4OdvHMniw36XmesuaN8Vol0f8+0t5Co"
+      "bytes": 32056,
+      "gzipBytes": 5665,
+      "integrity": "sha384-oOjE+WM5KJHKpE1oStBqUoDIIpS8EkafLrxjBRy+dFwWpeGA9VcY//BRlH/l5OyS"
     },
     "dist/json/schemes.json": {
       "bytes": 29456,
