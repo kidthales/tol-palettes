@@ -4,11 +4,22 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadSchemes, makeValidator, invariantProblems } from '../tools/validate.mjs';
-import { toIdent } from '../tools/generate-js.mjs';
+import { toIdent, rgbToHex as genRgbToHex, hexToRgb as genHexToRgb } from '../tools/generate-js.mjs';
 import * as tol from '../dist/js/index.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceSchemes = loadSchemes().map((x) => x.data);
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+
+function assertDeepFrozen(value, path = 'root') {
+  if (value === null || typeof value !== 'object') {
+    return;
+  }
+  assert.equal(Object.isFrozen(value), true, `Expected ${path} to be frozen`);
+  for (const key of Object.keys(value)) {
+    assertDeepFrozen(value[key], `${path}.${key}`);
+  }
+}
 
 test('dist/json/schemes.json is schema-valid, attributed and matches data/schemes/*.json', () => {
   const raw = readFileSync(join(root, 'dist', 'json', 'schemes.json'), 'utf8');
@@ -122,4 +133,214 @@ test('discreteColors handles discreteIndexes (nightfall) and sample generates ev
 
   const sampled = tol.sample('sunset', 3);
   assert.deepEqual(sampled, ['#364B9A', '#EAECCC', '#A50026']);
+});
+
+test('exported schemes, scheme map, and schemeList are deeply frozen', () => {
+  assertDeepFrozen(tol.schemes, 'tol.schemes');
+  assertDeepFrozen(tol.schemeList, 'tol.schemeList');
+  for (const src of sourceSchemes) {
+    const ident = toIdent(src.id);
+    assertDeepFrozen(tol[ident], `tol.${ident}`);
+  }
+
+  assert.throws(() => {
+    tol.bright.id = 'mutated';
+  }, TypeError);
+  assert.throws(() => {
+    tol.bright.colors.push({ hex: '#000000' });
+  }, TypeError);
+  assert.throws(() => {
+    tol.bright.colors[0].hex = '#000000';
+  }, TypeError);
+  assert.throws(() => {
+    tol.bright.extras[0].hex = '#111111';
+  }, TypeError);
+  assert.throws(() => {
+    tol.bright.source.retrieved = '2099-01-01';
+  }, TypeError);
+  assert.throws(() => {
+    tol.rainbowDiscrete.lut[0].push(99);
+  }, TypeError);
+  assert.throws(() => {
+    tol.rainbowDiscrete.lutBad['23'] = '#000000';
+  }, TypeError);
+  assert.throws(() => {
+    tol.rainbowSmooth.subranges[0].from = 99;
+  }, TypeError);
+  assert.throws(() => {
+    tol.schemes.bright = tol.muted;
+  }, TypeError);
+  assert.throws(() => {
+    tol.schemeList.push(tol.bright);
+  }, TypeError);
+});
+
+test('getNamed resolves named colours across colors and extras and rejects unknown or invalid inputs', () => {
+  const namedSchemes = sourceSchemes.filter((s) => s.colors.some((c) => typeof c.name === 'string'));
+  assert.equal(namedSchemes.length, 6);
+
+  for (const src of namedSchemes) {
+    const schemeObj = tol[toIdent(src.id)];
+    for (const c of [...src.colors, ...(src.extras ?? [])]) {
+      assert.equal(tol.getNamed(src.id, c.name), c.hex);
+      assert.equal(tol.getNamed(schemeObj, c.name), c.hex);
+    }
+  }
+
+  // Explicitly verify extras lookup
+  assert.equal(tol.getNamed('bright', 'black'), '#000000');
+  assert.equal(tol.getNamed('muted', 'pale_grey'), '#DDDDDD');
+  assert.equal(tol.getNamed(tol.light, 'black'), '#000000');
+
+  // Custom scheme object with colors + extras
+  const custom = {
+    id: 'custom',
+    colors: [{ hex: '#112233', name: 'primary' }],
+    extras: [{ hex: '#445566', name: 'accent' }],
+  };
+  assert.equal(tol.getNamed(custom, 'primary'), '#112233');
+  assert.equal(tol.getNamed(custom, 'accent'), '#445566');
+
+  // Unknown scheme or unknown name -> RangeError
+  assert.throws(() => tol.getNamed('non-existent-scheme', 'blue'), RangeError);
+  assert.throws(() => tol.getNamed('bright', 'magenta'), RangeError);
+  assert.throws(() => tol.getNamed('bright', ''), RangeError);
+  assert.throws(() => tol.getNamed('bright', '__proto__'), RangeError);
+  assert.throws(() => tol.getNamed('bright', 'toString'), RangeError);
+  assert.throws(() => tol.getNamed('sunset', 'blue'), RangeError);
+  assert.throws(() => tol.getNamed('dark', 'blue'), RangeError);
+
+  // Invalid schemeOrId or non-string name -> TypeError
+  for (const badScheme of [null, undefined, 42, true, [], {}, { colors: [] }]) {
+    assert.throws(() => tol.getNamed(badScheme, 'blue'), TypeError);
+  }
+  for (const badName of [undefined, null, 123, true, {}, ['blue']]) {
+    assert.throws(() => tol.getNamed('bright', badName), TypeError);
+  }
+});
+
+test('strict input guards reject invalid schemes, non-finite RGB, and invalid discrete lengths', () => {
+  // getScheme: reject non-strings, arrays, and objects without non-empty colors arrays
+  for (const badScheme of [null, undefined, 0, 42, true, false, Symbol('s'), [], [{}], {}, { colors: [] }, { colors: 'bad' }]) {
+    assert.throws(() => tol.getScheme(badScheme), TypeError);
+  }
+  assert.throws(() => tol.getScheme(''), RangeError);
+  assert.throws(() => tol.getScheme('non-existent'), RangeError);
+
+  const customScheme = { id: 'custom', colors: [{ hex: '#123456' }] };
+  assert.equal(tol.getScheme(customScheme), customScheme);
+
+  // hexToRgb (runtime + generator): reject non-strings and malformed hex strings
+  for (const fn of [tol.hexToRgb, genHexToRgb]) {
+    for (const badHex of [null, undefined, 123, {}, '#FFF', '4477AA', '#GGGGGG', '#4477AAFF']) {
+      assert.throws(() => fn(badHex), TypeError);
+    }
+  }
+
+  // rgbToHex (runtime + generator): reject NaN, Infinity, -Infinity, and non-numbers; clamp finite values
+  for (const fn of [tol.rgbToHex, genRgbToHex]) {
+    for (const badVal of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, '255', null, undefined, {}]) {
+      assert.throws(() => fn(badVal, 0, 0), TypeError);
+      assert.throws(() => fn(0, badVal, 0), TypeError);
+      assert.throws(() => fn(0, 0, badVal), TypeError);
+    }
+    assert.equal(fn(-10, 300, 127.6), '#00FF80');
+  }
+
+  // interpolate & sample negative inputs
+  for (const badT of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, '0.5', null, undefined]) {
+    assert.throws(() => tol.interpolate('sunset', badT), TypeError);
+  }
+  assert.throws(() => tol.interpolate(null, 0.5), TypeError);
+  assert.throws(() => tol.interpolate('unknown', 0.5), RangeError);
+
+  for (const badCount of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '3', null, undefined]) {
+    assert.throws(() => tol.sample('sunset', badCount), RangeError);
+  }
+  assert.deepEqual(tol.sample('sunset', 1), ['#EAECCC']);
+
+  // discreteRainbowBad negative inputs
+  for (const badN of [0, -1, 24, 2.5, Number.NaN, Number.POSITIVE_INFINITY, '5', null, undefined]) {
+    assert.throws(() => tol.discreteRainbowBad(badN), RangeError);
+  }
+
+  // discreteColors: enforce LUT-only integer n, reject n !== undefined on non-LUT schemes
+  assert.equal(tol.discreteColors('rainbow-discrete').length, 23);
+  for (const badLutN of [0, -1, 24, 2.5, Number.NaN, Number.POSITIVE_INFINITY, '5', null]) {
+    assert.throws(() => tol.discreteColors('rainbow-discrete', badLutN), RangeError);
+  }
+  for (const nonLutId of ['bright', 'sunset', 'nightfall']) {
+    for (const unexpectedN of [3, 0, null, '3']) {
+      assert.throws(() => tol.discreteColors(nonLutId, unexpectedN), RangeError);
+    }
+  }
+  assert.throws(() => tol.discreteColors(null), TypeError);
+  assert.throws(() => tol.discreteColors('unknown'), RangeError);
+});
+
+test('dist/js/index.js preserves single-palette bundler tree-shaking invariants', () => {
+  assert.equal(pkg.sideEffects, false, 'package.json must declare "sideEffects": false');
+
+  const jsText = readFileSync(join(root, 'dist', 'js', 'index.js'), 'utf8');
+  assert.match(jsText, /^function freeze\(/m, 'freeze helper must be declared internally');
+  assert.doesNotMatch(jsText, /^export\s+function\s+freeze\b/m, 'freeze helper must not be exported');
+
+  // All 22 scheme constants, schemes, and schemeList must use /* @__PURE__ */ freeze(...)
+  for (const src of sourceSchemes) {
+    const ident = toIdent(src.id);
+    const declRe = new RegExp(`^export const ${ident} = \\/\\* @__PURE__ \\*\\/ freeze\\(\\{`, 'm');
+    assert.match(jsText, declRe, `Missing /* @__PURE__ */ annotation on scheme constant ${ident}`);
+  }
+  assert.match(jsText, /^export const schemes = \/\* @__PURE__ \*\/ freeze\(\{/m);
+  assert.match(jsText, /^export const schemeList = \/\* @__PURE__ \*\/ freeze\(\[/m);
+
+  // Every top-level freeze(...) call must be preceded by /* @__PURE__ */
+  const allFreezeCalls = jsText.match(/freeze\(/g) ?? [];
+  const pureFreezeCalls = jsText.match(/\/\* @__PURE__ \*\/ freeze\(/g) ?? [];
+  // 1 declaration ("function freeze(") + 2 recursive calls inside freeze() + 24 annotated top-level exports = 27
+  assert.equal(pureFreezeCalls.length, sourceSchemes.length + 2);
+  assert.equal(allFreezeCalls.length, sourceSchemes.length + 2 + 3);
+
+  // Verify each exported scheme constant initializer is self-contained (no references to other schemes)
+  for (const src of sourceSchemes) {
+    const ident = toIdent(src.id);
+    const startMarker = `export const ${ident} = /* @__PURE__ */ freeze(`;
+    const startIdx = jsText.indexOf(startMarker);
+    assert.notEqual(startIdx, -1, `Missing declaration for ${ident}`);
+    const endIdx = jsText.indexOf('\n});', startIdx);
+    assert.notEqual(endIdx, -1, `Unterminated declaration for ${ident}`);
+    const jsonPayload = jsText.slice(startIdx + startMarker.length, endIdx + 2);
+    assert.deepEqual(JSON.parse(jsonPayload), src, `Self-contained JSON payload mismatch for ${ident}`);
+  }
+
+  // Verify zero top-level side-effect statements outside function/export declarations
+  let depth = 0;
+  let inHeaderComment = false;
+  for (const line of jsText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (inHeaderComment) {
+      if (trimmed.includes('*/')) inHeaderComment = false;
+      continue;
+    }
+    if (trimmed.startsWith('/*')) {
+      if (!trimmed.includes('*/')) inHeaderComment = true;
+      continue;
+    }
+    if (trimmed === '' || trimmed.startsWith('*') || trimmed.startsWith('//')) continue;
+    if (depth === 0) {
+      assert.match(
+        line,
+        /^(?:function freeze\(|export const [a-zA-Z0-9_]+ = \/\* @__PURE__ \*\/ freeze\(|export function [a-zA-Z0-9_]+\()/,
+        `Unexpected top-level statement in dist/js/index.js: ${line}`,
+      );
+    }
+    for (const ch of line) {
+      if (ch === '{' || ch === '(' || ch === '[') depth++;
+      else if (ch === '}' || ch === ')' || ch === ']') depth--;
+    }
+  }
+  assert.equal(depth, 0, 'Bracket depth must return to 0 at EOF');
+
+  const dtsText = readFileSync(join(root, 'dist', 'js', 'index.d.ts'), 'utf8');
+  assert.match(dtsText, /export declare function getNamed\(/);
 });
