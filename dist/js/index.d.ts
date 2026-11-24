@@ -75,6 +75,7 @@ export declare const schemeList: readonly Scheme[];
 export declare function get(id: SchemeId): Scheme;
 export declare function get(id: string): Scheme | undefined;
 export declare function getScheme(schemeOrId: Scheme | SchemeId | string): Scheme;
+export declare function getNamed(schemeOrId: Scheme | SchemeId | string, name: string): HexColor;
 export declare function hexToRgb(hex: string): [number, number, number];
 export declare function rgbToHex(r: number, g: number, b: number): HexColor;
 export declare function interpolate(

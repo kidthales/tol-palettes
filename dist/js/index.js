@@ -1726,6 +1726,30 @@ export function getScheme(schemeOrId) {
 }
 
 /**
+ * Look up a named colour hex value in a scheme's colors and extras arrays.
+ * Throws RangeError if the scheme or colour name is unknown, or TypeError for invalid inputs.
+ * @param {string | object} schemeOrId
+ * @param {string} name
+ * @returns {string}
+ */
+export function getNamed(schemeOrId, name) {
+  const scheme = getScheme(schemeOrId);
+  if (typeof name !== 'string') {
+    throw new TypeError('Expected a colour name string, got ' + String(name));
+  }
+  for (const c of scheme.colors) {
+    if (c && c.name === name) return c.hex;
+  }
+  if (Array.isArray(scheme.extras)) {
+    for (const c of scheme.extras) {
+      if (c && c.name === name) return c.hex;
+    }
+  }
+  const idLabel = typeof scheme.id === 'string' && scheme.id.length > 0 ? scheme.id : 'custom';
+  throw new RangeError('Unknown named colour "' + name + '" in scheme "' + idLabel + '"');
+}
+
+/**
  * Parse a #RRGGBB hex string into [r, g, b] integers in 0..255.
  * @param {string} hex
  * @returns {[number, number, number]}
