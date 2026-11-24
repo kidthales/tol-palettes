@@ -3,15 +3,15 @@
   "version": "1.0.0-alpha.1",
   "artifacts": {
     "index.js": {
-      "sha256": "1afc9156b9daf36b1be6b9027548c5a6d3b9efe89e4d485b27e6b92d41fab56c",
-      "size_bytes": 30396
+      "sha256": "03ac33c0d61013e80290c3b6396513d342a27b9ef4f361735c59addcf9fce6e2",
+      "size_bytes": 31187
     },
     "schemes.json": {
       "sha256": "dfb8f87137d48c6654c63d319f03ef0f969143e01eb40e02b7198bbb9048b9a1",
       "size_bytes": 29456
     },
     "sri.json": {
-      "sha256": "221dbb4c99f7b70981f4c66a75acdfe7a5f4f3a509166779b0573111ec029885",
+      "sha256": "42ac3ff22086b872872dfe913b2cd47e05b419ddd6355d91899b57bfb2c8101e",
       "size_bytes": 4654
     },
     "tol-palettes-aseprite.zip": {

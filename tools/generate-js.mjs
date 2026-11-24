@@ -38,6 +38,9 @@ export function hexToRgb(hex) {
 }
 
 export function rgbToHex(r, g, b) {
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    throw new TypeError(`Expected finite numbers for RGB channels, got (${String(r)}, ${String(g)}, ${String(b)})`);
+  }
   const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
   const hex2 = (v) => clamp(v).toString(16).toUpperCase().padStart(2, '0');
   return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
@@ -68,16 +71,25 @@ export function get(id) {
 }
 
 /**
- * Look up a scheme by id or return a passed scheme object; throws RangeError if unknown.
+ * Look up a scheme by id or validate a passed scheme object; throws RangeError if unknown id or TypeError if invalid.
  * @param {string | object} schemeOrId
  */
 export function getScheme(schemeOrId) {
-  if (schemeOrId && typeof schemeOrId === 'object' && Array.isArray(schemeOrId.colors)) {
+  if (typeof schemeOrId === 'string') {
+    const s = get(schemeOrId);
+    if (!s) throw new RangeError('Unknown palette scheme: ' + schemeOrId);
+    return s;
+  }
+  if (
+    schemeOrId !== null &&
+    typeof schemeOrId === 'object' &&
+    !Array.isArray(schemeOrId) &&
+    Array.isArray(schemeOrId.colors) &&
+    schemeOrId.colors.length > 0
+  ) {
     return schemeOrId;
   }
-  const s = get(String(schemeOrId));
-  if (!s) throw new RangeError('Unknown palette scheme: ' + schemeOrId);
-  return s;
+  throw new TypeError('Expected a scheme id string or a scheme object with a non-empty colors array');
 }
 
 /**
@@ -104,6 +116,11 @@ export function hexToRgb(hex) {
  * @returns {string}
  */
 export function rgbToHex(r, g, b) {
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    throw new TypeError(
+      'Expected finite numbers for RGB channels, got (' + String(r) + ', ' + String(g) + ', ' + String(b) + ')',
+    );
+  }
   const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
   const hex2 = (v) => clamp(v).toString(16).toUpperCase().padStart(2, '0');
   return '#' + hex2(r) + hex2(g) + hex2(b);
@@ -196,7 +213,8 @@ export function discreteRainbowBad(n) {
 
 /**
  * Return the discrete hex colour list for a scheme.
- * - For rainbow-discrete, requires or uses n (defaults to max lut length 23).
+ * - For LUT schemes (rainbow-discrete), requires or uses integer n in 1..lut.length (defaults to max lut length 23).
+ * - Rejects n !== undefined with RangeError on non-LUT schemes.
  * - For schemes with discreteIndexes (e.g. nightfall), returns the indexed subset.
  * - Otherwise returns all defined stops in order.
  * @param {string | object} schemeOrId
@@ -208,9 +226,16 @@ export function discreteColors(schemeOrId, n) {
   if (scheme.lut) {
     const len = n === undefined ? scheme.lut.length : n;
     if (!Number.isInteger(len) || len < 1 || len > scheme.lut.length) {
-      throw new RangeError('Length for "' + scheme.id + '" must be an integer in 1..' + scheme.lut.length + ', got ' + len);
+      throw new RangeError(
+        'Length for "' + scheme.id + '" must be an integer in 1..' + scheme.lut.length + ', got ' + String(len),
+      );
     }
     return scheme.lut[len - 1].map((idx) => scheme.colors[idx].hex);
+  }
+  if (n !== undefined) {
+    throw new RangeError(
+      'Scheme "' + scheme.id + '" does not have a LUT and does not accept discrete length n=' + String(n),
+    );
   }
   if (scheme.discreteIndexes) {
     return scheme.discreteIndexes.map((idx) => scheme.colors[idx].hex);
